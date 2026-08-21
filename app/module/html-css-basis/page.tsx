@@ -404,7 +404,9 @@ export default function HtmlCssBasisPage() {
           <Link href="/#curriculum" className="text-sm font-medium text-ink/60 hover:text-ink">
             ← Alle Kapitel
           </Link>
-          <span className="text-sm text-ink/35">Nächstes Kapitel: CSS-Layout &amp; Responsive Design</span>
+          <Link href="/module/css-layout" className="text-sm font-medium text-ink/60 hover:text-ink">
+            Nächstes Kapitel: CSS-Layout &amp; Responsive Design →
+          </Link>
         </div>
       </main>
     </>

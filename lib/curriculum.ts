@@ -47,6 +47,7 @@ export const phases: Phase[] = [
         goal: "Layouts mit Flexbox und Grid bauen, die auf jedem Bildschirm funktionieren.",
         topics: ["Flexbox", "CSS Grid", "Media Queries", "Mobile-First-Prinzip"],
         duration: "3–4 Std.",
+        href: "/module/css-layout",
       },
       {
         id: "git-github",
