@@ -39,6 +39,11 @@ jobs:
 
       - name: GitHub Pages konfigurieren
         uses: actions/configure-pages@v5
+        with:
+          # Legt die Pages-Site automatisch an, falls sie (z. B. nach dem
+          # Umstellen auf "öffentlich") noch nicht existiert – macht den
+          # manuellen Schritt in Settings → Pages → Source überflüssig.
+          enablement: true
 
       - name: Build-Artefakt hochladen
         uses: actions/upload-pages-artifact@v3
