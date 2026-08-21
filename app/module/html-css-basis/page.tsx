@@ -401,8 +401,8 @@ export default function HtmlCssBasisPage() {
         </section>
 
         <div className="flex items-center justify-between border-t border-ink/10 pt-8">
-          <Link href="/#curriculum" className="text-sm font-medium text-ink/60 hover:text-ink">
-            ← Alle Kapitel
+          <Link href="/module/wie-funktioniert-das-web" className="text-sm font-medium text-ink/60 hover:text-ink">
+            ← Kapitel 1: Wie funktioniert das Web?
           </Link>
           <Link href="/module/css-layout" className="text-sm font-medium text-ink/60 hover:text-ink">
             Nächstes Kapitel: CSS-Layout &amp; Responsive Design →

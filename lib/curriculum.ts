@@ -30,6 +30,7 @@ export const phases: Phase[] = [
         goal: "Client-Server-Modell, HTTP-Requests und die Rolle des Browsers verstehen.",
         topics: ["Client vs. Server", "URL, DNS & HTTP", "Request/Response-Zyklus", "Was macht ein Browser?"],
         duration: "1–2 Std.",
+        href: "/module/wie-funktioniert-das-web",
       },
       {
         id: "html-css-basis",

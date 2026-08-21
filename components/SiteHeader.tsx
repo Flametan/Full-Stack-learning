@@ -15,10 +15,10 @@ export default function SiteHeader() {
             Curriculum
           </Link>
           <Link
-            href="/module/html-css-basis"
+            href="/module/wie-funktioniert-das-web"
             className="rounded-full bg-accent px-4 py-1.5 font-medium text-white transition hover:bg-accent/90"
           >
-            Modul 2 starten
+            Jetzt starten
           </Link>
         </nav>
       </div>
