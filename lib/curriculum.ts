@@ -83,6 +83,7 @@ export const phases: Phase[] = [
         goal: "Seiteninhalte per JavaScript verändern und auf Nutzerinteraktionen reagieren.",
         topics: ["DOM-Baum", "querySelector & Co.", "Event-Listener", "Formulare auslesen"],
         duration: "3 Std.",
+        href: "/module/dom-events",
       },
       {
         id: "modernes-js",

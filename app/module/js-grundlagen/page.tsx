@@ -352,7 +352,9 @@ export default function JsGrundlagenPage() {
           <Link href="/module/git-github" className="text-sm font-medium text-ink/60 hover:text-ink">
             ← Kapitel 4: Versionskontrolle mit Git &amp; GitHub
           </Link>
-          <span className="text-sm text-ink/35">Nächstes Kapitel: DOM-Manipulation &amp; Events</span>
+          <Link href="/module/dom-events" className="text-sm font-medium text-ink/60 hover:text-ink">
+            Nächstes Kapitel: DOM-Manipulation &amp; Events →
+          </Link>
         </div>
       </main>
     </>
