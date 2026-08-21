@@ -391,7 +391,9 @@ export default function CssLayoutPage() {
           <Link href="/module/html-css-basis" className="text-sm font-medium text-ink/60 hover:text-ink">
             ← Kapitel 2: HTML/CSS-Basis
           </Link>
-          <span className="text-sm text-ink/35">Nächstes Kapitel: Versionskontrolle mit Git &amp; GitHub</span>
+          <Link href="/module/git-github" className="text-sm font-medium text-ink/60 hover:text-ink">
+            Nächstes Kapitel: Versionskontrolle mit Git &amp; GitHub →
+          </Link>
         </div>
       </main>
     </>

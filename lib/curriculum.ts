@@ -56,6 +56,7 @@ export const phases: Phase[] = [
         goal: "Code-Änderungen nachvollziehbar speichern und mit anderen teilen.",
         topics: ["init, add, commit, push", "Branches & Merges", "Pull Requests", ".gitignore"],
         duration: "2 Std.",
+        href: "/module/git-github",
       },
     ],
   },
