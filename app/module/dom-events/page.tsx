@@ -394,7 +394,9 @@ export default function DomEventsPage() {
           <Link href="/module/js-grundlagen" className="text-sm font-medium text-ink/60 hover:text-ink">
             ← Kapitel 5: JavaScript-Grundlagen
           </Link>
-          <span className="text-sm text-ink/35">Nächstes Kapitel: Modernes JavaScript (ES6+)</span>
+          <Link href="/module/modernes-js" className="text-sm font-medium text-ink/60 hover:text-ink">
+            Nächstes Kapitel: Modernes JavaScript (ES6+) →
+          </Link>
         </div>
       </main>
     </>

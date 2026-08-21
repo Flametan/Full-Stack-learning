@@ -92,6 +92,7 @@ export const phases: Phase[] = [
         goal: "Zeitgemäßen, lesbaren JS-Code mit modernen Sprachfeatures schreiben.",
         topics: ["Arrow Functions", "Destructuring & Spread", "Array-Methoden (map/filter/reduce)", "Module (import/export)"],
         duration: "3 Std.",
+        href: "/module/modernes-js",
       },
       {
         id: "async-js",
