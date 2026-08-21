@@ -73,6 +73,7 @@ export const phases: Phase[] = [
         goal: "Variablen, Datentypen, Funktionen und Kontrollstrukturen sicher anwenden.",
         topics: ["let/const, Datentypen", "Funktionen & Scope", "if/else, Schleifen", "Arrays & Objekte (Basis)"],
         duration: "4 Std.",
+        href: "/module/js-grundlagen",
       },
       {
         id: "dom-events",

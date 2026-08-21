@@ -294,7 +294,9 @@ export default function GitGithubPage() {
           <Link href="/module/css-layout" className="text-sm font-medium text-ink/60 hover:text-ink">
             ← Kapitel 3: CSS-Layout &amp; Responsive Design
           </Link>
-          <span className="text-sm text-ink/35">Nächstes Kapitel: JavaScript-Grundlagen</span>
+          <Link href="/module/js-grundlagen" className="text-sm font-medium text-ink/60 hover:text-ink">
+            Nächstes Kapitel: JavaScript-Grundlagen →
+          </Link>
         </div>
       </main>
     </>
