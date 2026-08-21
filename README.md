@@ -41,6 +41,29 @@ npm run dev
 Die Seite läuft danach unter `http://localhost:3000`.
 
 ```bash
-npm run build   # Produktions-Build
+npm run build   # Statischer Produktions-Export nach ./out
+npm run start   # Export lokal unter http://localhost:3000 ausliefern
 npm run lint    # Linting
 ```
+
+## Deployment (GitHub Pages)
+
+Die Seite wird als statischer Export (`next build` mit `output: "export"`) gebaut und über
+`.github/workflows/deploy.yml` automatisch auf GitHub Pages veröffentlicht, sobald auf `main`
+oder `claude/fullstack-learning-curriculum-kx0aer` gepusht wird (oder manuell über den
+„Run workflow“-Button im Actions-Tab).
+
+**Einmalig nötig, damit das Deployment tatsächlich live geht** (siehe Repository-Einstellungen):
+
+1. **Sichtbarkeit:** GitHub Pages benötigt auf dem kostenlosen Plan ein öffentliches Repository
+   (Settings → General → Danger Zone → Change repository visibility).
+2. **Pages-Quelle:** Settings → Pages → Build and deployment → Source auf **„GitHub Actions“**
+   stellen.
+
+Nach dem nächsten Push läuft der Workflow automatisch durch; die URL erscheint danach im
+Actions-Tab des jeweiligen Workflow-Runs (z. B. `https://<username>.github.io/<repo>/`).
+
+In der GitHub-Actions-Umgebung wird automatisch ein Pfadpräfix (`basePath`) auf Basis des
+Repository-Namens gesetzt (siehe `next.config.js`), damit alle internen Links unter dem
+GitHub-Pages-Unterpfad funktionieren. Lokale Builds (`npm run build` ohne CI-Umgebung) bleiben
+unter `/` erreichbar.
