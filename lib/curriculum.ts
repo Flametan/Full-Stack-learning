@@ -101,6 +101,7 @@ export const phases: Phase[] = [
         goal: "Daten von externen Quellen laden, ohne die Seite zu blockieren.",
         topics: ["Callbacks → Promises", "async/await", "Fetch API", "Fehlerbehandlung mit try/catch"],
         duration: "3 Std.",
+        href: "/module/async-js",
       },
     ],
   },

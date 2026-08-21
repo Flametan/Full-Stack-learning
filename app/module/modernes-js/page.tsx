@@ -333,7 +333,9 @@ export default function ModernesJsPage() {
           <Link href="/module/dom-events" className="text-sm font-medium text-ink/60 hover:text-ink">
             ← Kapitel 6: DOM-Manipulation &amp; Events
           </Link>
-          <span className="text-sm text-ink/35">Nächstes Kapitel: Asynchrones JavaScript</span>
+          <Link href="/module/async-js" className="text-sm font-medium text-ink/60 hover:text-ink">
+            Nächstes Kapitel: Asynchrones JavaScript →
+          </Link>
         </div>
       </main>
     </>
