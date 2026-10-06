@@ -1,25 +1,16 @@
 "use strict";
 
-/* Profilansicht im Raster und Story-Vorschau */
+/* Profilansicht, Story-Vorschau und Bildbetrachter */
 
 /* ------------------------------------------------------------------ */
-/* Profilansicht                                                       */
+/* Profilansicht (pro Plattform)                                       */
 /* ------------------------------------------------------------------ */
 
 const profileView = {
   root: document.getElementById("profile-view"),
   close: document.getElementById("profile-view-close"),
   title: document.getElementById("profile-view-title"),
-  avatar: document.getElementById("profile-view-avatar"),
-  posts: document.getElementById("profile-view-posts"),
-  followers: document.getElementById("profile-view-followers"),
-  following: document.getElementById("profile-view-following"),
-  name: document.getElementById("profile-view-name"),
-  bio: document.getElementById("profile-view-bio"),
-  follow: document.getElementById("profile-follow"),
-  message: document.getElementById("profile-message"),
-  grid: document.getElementById("profile-grid"),
-  empty: document.getElementById("profile-grid-empty"),
+  body: document.getElementById("profile-view-body"),
   trigger: null,
   isFollowing: false,
 };
@@ -28,29 +19,42 @@ function isProfileViewOpen() {
   return !profileView.root.hidden;
 }
 
-function renderProfileView() {
-  const verified = ACCOUNT.verified ? " ✓" : "";
-  profileView.title.textContent = `${ACCOUNT.username}${verified}`;
-  profileView.title.setAttribute("aria-label", `${ACCOUNT.username}${ACCOUNT.verified ? ", verifiziert" : ""}`);
-  profileView.avatar.replaceChildren(createAvatar(ACCOUNT.username, "avatar--profile avatar--story"));
-  profileView.posts.textContent = numberFormat.format(POSTS.length);
-  profileView.followers.textContent = numberFormat.format(ACCOUNT.followers + (profileView.isFollowing ? 1 : 0));
-  profileView.following.textContent = numberFormat.format(ACCOUNT.following);
-  profileView.name.textContent = ACCOUNT.displayName;
-  profileView.name.hidden = !ACCOUNT.displayName;
-  profileView.bio.textContent = ACCOUNT.bio;
-  profileView.bio.hidden = !ACCOUNT.bio;
-  profileView.follow.textContent = profileView.isFollowing ? "Gefolgt" : "Folgen";
-  profileView.follow.setAttribute("aria-pressed", String(profileView.isFollowing));
-  profileView.follow.classList.toggle("profile-buttons__button--primary", !profileView.isFollowing);
+function totalLikes() {
+  return POSTS.reduce((sum, post) => sum + (state.get(post.id)?.likes ?? 0), 0);
+}
 
-  profileView.grid.replaceChildren();
+function createFollowButtons(primaryClass) {
+  const row = createElement("div", "profile-buttons");
+  const follow = createButton(`profile-buttons__button ${profileView.isFollowing ? "" : primaryClass}`, profileView.isFollowing ? "Gefolgt" : "Folgen");
+  follow.setAttribute("aria-pressed", String(profileView.isFollowing));
+  follow.addEventListener("click", () => {
+    profileView.isFollowing = !profileView.isFollowing;
+    renderProfileView();
+    profileView.body.querySelector(".profile-buttons__button")?.focus();
+  });
+  const message = createButton("profile-buttons__button", "Nachricht");
+  message.addEventListener("click", () => showToast("Direktnachrichten sind in dieser Simulation nicht enthalten."));
+  row.append(follow, message);
+  return row;
+}
+
+function createStat(value, label) {
+  const stat = createElement("div");
+  stat.append(createElement("dd", "", value), createElement("dt", "", label));
+  return stat;
+}
+
+// Raster mit Kacheln im Format der Plattform; Videos mit Abspielsymbol bzw. Aufrufen (TikTok)
+function createProfileGrid({ ratio, showViews = false }) {
+  const grid = createElement("ul", "profile-grid");
+  grid.style.setProperty("--grid-ratio", String(ratio));
   POSTS.forEach((post, index) => {
     const tile = createElement("li", "profile-grid__item");
     const button = createButton("profile-grid__button");
     button.setAttribute("aria-label", `Beitrag ${index + 1} im Feed öffnen`);
+    const first = post.media[0];
     const image = createElement("img", "profile-grid__image");
-    image.src = post.media[0].src;
+    image.src = thumbSrc(first);
     image.alt = "";
     image.loading = "lazy";
     image.style.objectPosition = focusToPosition(post.focus);
@@ -59,15 +63,108 @@ function renderProfileView() {
       const icon = createElement("span", "profile-grid__badge");
       icon.innerHTML = ICON_CAROUSEL;
       button.append(icon);
+    } else if (isVideo(first) && !showViews) {
+      button.append(createElement("span", "profile-grid__badge profile-grid__badge--play", "▶"));
+    }
+    if (showViews) {
+      button.append(createElement("span", "profile-grid__views", `▷ ${compactFormat.format(displayCounts(post).views)}`));
     }
     button.addEventListener("click", () => {
       closeProfileView({ returnFocus: false });
       focusPost(post.id);
     });
     tile.append(button);
-    profileView.grid.append(tile);
+    grid.append(tile);
   });
-  profileView.empty.hidden = POSTS.length > 0;
+  return grid;
+}
+
+function emptyGridNote() {
+  return createElement("p", "profile-grid__empty", "Noch keine Beiträge.");
+}
+
+const PROFILE_RENDERERS = {
+  instagram(body) {
+    profileView.title.textContent = ACCOUNT.username;
+    const head = createElement("div", "profile-head");
+    const avatar = createElement("span", "profile-head__avatar");
+    avatar.append(createAvatar(ACCOUNT.username, "avatar--profile avatar--story"));
+    const stats = createElement("dl", "profile-head__stats");
+    stats.append(
+      createStat(numberFormat.format(POSTS.length), "Beiträge"),
+      createStat(numberFormat.format(ACCOUNT.followers + (profileView.isFollowing ? 1 : 0)), "Follower"),
+      createStat(numberFormat.format(ACCOUNT.following), "Gefolgt")
+    );
+    head.append(avatar, stats);
+    const bio = createElement("div", "profile-bio");
+    if (ACCOUNT.displayName) bio.append(createElement("p", "profile-bio__name", ACCOUNT.displayName));
+    if (ACCOUNT.bio) bio.append(createElement("p", "profile-bio__text", ACCOUNT.bio));
+    body.append(
+      head,
+      bio,
+      createFollowButtons("profile-buttons__button--primary"),
+      createElement("p", "profile-view__note", "Kacheln zeigen den Ausschnitt im Format 3:4, wie im Instagram-Profilraster."),
+      POSTS.length ? createProfileGrid({ ratio: PLATFORMS.instagram.gridRatio }) : emptyGridNote()
+    );
+  },
+
+  tiktok(body) {
+    profileView.title.textContent = ACCOUNT.displayName || ACCOUNT.username;
+    const head = createElement("div", "tt-profile");
+    const avatar = createElement("span", "tt-profile__avatar");
+    avatar.append(createAvatar(ACCOUNT.username, "avatar--profile"));
+    const handle = createElement("p", "tt-profile__handle", `@${ACCOUNT.username}`);
+    const stats = createElement("dl", "tt-profile__stats");
+    stats.append(
+      createStat(compactFormat.format(ACCOUNT.following), "Gefolgt"),
+      createStat(compactFormat.format(ACCOUNT.followers + (profileView.isFollowing ? 1 : 0)), "Follower"),
+      createStat(compactFormat.format(totalLikes()), "Likes")
+    );
+    head.append(avatar, handle, stats, createFollowButtons("profile-buttons__button--tiktok"));
+    if (ACCOUNT.bio) head.append(createElement("p", "tt-profile__bio", ACCOUNT.bio));
+    body.append(
+      head,
+      createElement("p", "profile-view__note", "Kacheln zeigen den Ausschnitt im Format 3:4, wie im TikTok-Profil. Die Aufrufe sind Beispielwerte."),
+      POSTS.length ? createProfileGrid({ ratio: PLATFORMS.tiktok.gridRatio, showViews: true }) : emptyGridNote()
+    );
+  },
+
+  facebook(body) {
+    profileView.title.textContent = accountLabel("facebook");
+    const cover = createElement("div", "fb-profile__cover");
+    const coverSource = POSTS.find((post) => thumbSrc(post.media[0]));
+    if (coverSource) {
+      const image = createElement("img", "fb-profile__cover-image");
+      image.src = thumbSrc(coverSource.media[0]);
+      image.alt = "";
+      cover.append(image);
+    }
+    const head = createElement("div", "fb-profile");
+    const avatar = createElement("span", "fb-profile__avatar");
+    avatar.append(createAvatar(ACCOUNT.username, "avatar--profile"));
+    const name = createElement("p", "fb-profile__name", accountLabel("facebook"));
+    const meta = createElement(
+      "p",
+      "fb-profile__meta",
+      `${numberFormat.format(ACCOUNT.followers + (profileView.isFollowing ? 1 : 0))} Follower · ${numberFormat.format(ACCOUNT.following)} folgt`
+    );
+    head.append(avatar, name, meta);
+    if (ACCOUNT.bio) head.append(createElement("p", "fb-profile__bio", ACCOUNT.bio));
+    head.append(createFollowButtons("profile-buttons__button--facebook"));
+    body.append(
+      cover,
+      head,
+      createElement("p", "fb-profile__tab", "Fotos und Videos"),
+      createElement("p", "profile-view__note", "Vereinfachte Darstellung der Seite mit quadratischen Vorschaubildern."),
+      POSTS.length ? createProfileGrid({ ratio: PLATFORMS.facebook.gridRatio }) : emptyGridNote()
+    );
+  },
+};
+
+function renderProfileView() {
+  profileView.body.replaceChildren();
+  profileView.root.dataset.platform = currentPlatformId();
+  PROFILE_RENDERERS[currentPlatformId()](profileView.body);
 }
 
 function openProfileView(trigger) {
@@ -77,8 +174,9 @@ function openProfileView(trigger) {
   profileView.trigger = trigger ?? null;
   renderProfileView();
   profileView.root.hidden = false;
-  profileView.root.querySelector(".profile-view__scroll").scrollTop = 0;
+  profileView.body.scrollTop = 0;
   setActiveNav("profile");
+  pauseFeedVideos();
   profileView.close.focus();
 }
 
@@ -90,13 +188,87 @@ function closeProfileView({ returnFocus = true } = {}) {
   profileView.trigger = null;
 }
 
+function pauseFeedVideos() {
+  dom.posts.querySelectorAll("video").forEach((video) => video.pause());
+}
+
 function bindProfileViewEvents() {
   profileView.close.addEventListener("click", () => closeProfileView());
-  profileView.follow.addEventListener("click", () => {
-    profileView.isFollowing = !profileView.isFollowing;
-    renderProfileView();
-  });
-  profileView.message.addEventListener("click", () => showToast("Direktnachrichten sind in dieser Simulation nicht enthalten."));
+}
+
+/* ------------------------------------------------------------------ */
+/* Bildbetrachter (Facebook)                                           */
+/* ------------------------------------------------------------------ */
+
+const mediaViewer = {
+  root: document.getElementById("media-viewer"),
+  stage: document.getElementById("media-viewer-stage"),
+  counter: document.getElementById("media-viewer-counter"),
+  alt: document.getElementById("media-viewer-alt"),
+  close: document.getElementById("media-viewer-close"),
+  prev: document.getElementById("media-viewer-prev"),
+  next: document.getElementById("media-viewer-next"),
+  post: null,
+  index: 0,
+  trigger: null,
+};
+
+function isMediaViewerOpen() {
+  return !mediaViewer.root.hidden;
+}
+
+function renderMediaViewer() {
+  const { post, index } = mediaViewer;
+  const item = post.media[index];
+  const element = isVideo(item) ? createElement("video", "media-viewer__media") : createElement("img", "media-viewer__media");
+  if (isVideo(item)) {
+    element.controls = true;
+    element.playsInline = true;
+    element.autoplay = true;
+    if (item.poster) element.poster = item.poster;
+  } else {
+    element.alt = item.alt;
+  }
+  element.src = item.src;
+  mediaViewer.stage.replaceChildren(element);
+  mediaViewer.counter.textContent = post.media.length > 1 ? `${index + 1} von ${post.media.length}` : "";
+  mediaViewer.alt.textContent = item.alt;
+  mediaViewer.prev.hidden = index === 0;
+  mediaViewer.next.hidden = index === post.media.length - 1;
+}
+
+function openMediaViewer(post, index, trigger) {
+  if (!post) return;
+  closePopover({ returnFocus: false });
+  pauseFeedVideos();
+  mediaViewer.post = post;
+  mediaViewer.index = clamp(index, 0, post.media.length - 1);
+  mediaViewer.trigger = trigger;
+  renderMediaViewer();
+  mediaViewer.root.hidden = false;
+  mediaViewer.close.focus();
+}
+
+function stepMediaViewer(step) {
+  if (!isMediaViewerOpen()) return;
+  const next = mediaViewer.index + step;
+  if (next < 0 || next >= mediaViewer.post.media.length) return;
+  mediaViewer.index = next;
+  renderMediaViewer();
+}
+
+function closeMediaViewer() {
+  if (!isMediaViewerOpen()) return;
+  mediaViewer.root.hidden = true;
+  mediaViewer.stage.replaceChildren();
+  if (mediaViewer.trigger?.isConnected) mediaViewer.trigger.focus();
+  mediaViewer.trigger = null;
+}
+
+function bindMediaViewerEvents() {
+  mediaViewer.close.addEventListener("click", closeMediaViewer);
+  mediaViewer.prev.addEventListener("click", () => stepMediaViewer(-1));
+  mediaViewer.next.addEventListener("click", () => stepMediaViewer(1));
 }
 
 /* ------------------------------------------------------------------ */
@@ -104,12 +276,14 @@ function bindProfileViewEvents() {
 /* ------------------------------------------------------------------ */
 
 const STORY_DURATION = 5000;
+const STORY_VIDEO_MAX = 60000;
 
 const story = {
   root: document.getElementById("story-viewer"),
   frame: document.getElementById("story-frame"),
   backdrop: document.getElementById("story-backdrop"),
   image: document.getElementById("story-image"),
+  video: document.getElementById("story-video"),
   zones: document.getElementById("story-zones"),
   progress: document.getElementById("story-progress"),
   avatar: document.getElementById("story-avatar"),
@@ -141,10 +315,10 @@ function isStoryOpen() {
 function fitStoryFrame() {
   const { clientWidth: width, clientHeight: height } = story.root;
   let frameWidth = width;
-  let frameHeight = width / INSTAGRAM.storyRatio;
+  let frameHeight = width / GENERAL.storyRatio;
   if (frameHeight > height) {
     frameHeight = height;
-    frameWidth = height * INSTAGRAM.storyRatio;
+    frameWidth = height * GENERAL.storyRatio;
   }
   story.frame.style.width = `${frameWidth}px`;
   story.frame.style.height = `${frameHeight}px`;
@@ -153,23 +327,46 @@ function fitStoryFrame() {
 function slidesFromPosts(posts) {
   return posts.flatMap((post) =>
     post.media.map((item) => ({
+      type: item.type,
       src: item.src,
+      poster: item.poster,
       alt: item.alt,
       ratio: mediaRatio(item),
-      author: ACCOUNT.username,
+      author: accountLabel(),
       age: formatAgeShort(postAgeHours(post)),
     }))
   );
 }
 
+function storySlideDuration(slide) {
+  if (slide.type !== "video") return STORY_DURATION;
+  const seconds = story.video.duration;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, STORY_VIDEO_MAX) : STORY_DURATION;
+}
+
 function renderStorySlide() {
   const slide = story.slides[story.index];
-  const fits = Math.abs(slide.ratio - INSTAGRAM.storyRatio) / INSTAGRAM.storyRatio < 0.04;
-  story.image.src = slide.src;
-  story.image.alt = slide.alt;
-  story.image.classList.toggle("is-cover", fits);
-  story.backdrop.style.backgroundImage = fits ? "none" : `url("${slide.src}")`;
-  story.avatar.replaceChildren(createAvatar(slide.author, "avatar--sm"));
+  const fits = Math.abs(slide.ratio - GENERAL.storyRatio) / GENERAL.storyRatio < 0.04;
+  const video = slide.type === "video";
+  story.image.hidden = video;
+  story.video.hidden = !video;
+  story.video.pause();
+  if (video) {
+    story.image.removeAttribute("src");
+    story.video.src = slide.src;
+    story.video.muted = !videoSound;
+    story.video.currentTime = 0;
+    story.video.classList.toggle("is-cover", fits);
+    story.video.play().catch(() => {});
+  } else {
+    story.video.removeAttribute("src");
+    story.image.src = slide.src;
+    story.image.alt = slide.alt;
+    story.image.classList.toggle("is-cover", fits);
+  }
+  const backdropSource = video ? slide.poster : slide.src;
+  story.backdrop.style.backgroundImage = fits || !backdropSource ? "none" : `url("${backdropSource}")`;
+  story.avatar.replaceChildren(createAvatar(slide.author === VIEWER ? VIEWER : ACCOUNT.username, "avatar--sm"));
   story.name.textContent = slide.author;
   story.age.textContent = slide.age;
 
@@ -188,14 +385,22 @@ function storyTick(timestamp) {
   if (!isStoryOpen()) return;
   const delta = story.lastTick ? timestamp - story.lastTick : 0;
   story.lastTick = timestamp;
-  if (!story.paused && !story.holding) {
+  const slide = story.slides[story.index];
+  const stopped = story.paused || story.holding;
+  if (slide.type === "video") {
+    if (stopped && !story.video.paused) story.video.pause();
+    if (!stopped && story.video.paused && story.video.src) story.video.play().catch(() => {});
+    story.elapsed = story.video.currentTime * 1000;
+  } else if (!stopped) {
     story.elapsed += delta;
-    const bar = story.progress.children[story.index]?.firstElementChild;
-    if (bar) bar.style.width = `${Math.min(100, (story.elapsed / STORY_DURATION) * 100)}%`;
-    if (story.elapsed >= STORY_DURATION) {
-      goToStory(story.index + 1);
-      if (!isStoryOpen()) return;
-    }
+  }
+  const duration = storySlideDuration(slide);
+  const bar = story.progress.children[story.index]?.firstElementChild;
+  if (bar) bar.style.width = `${Math.min(100, (story.elapsed / duration) * 100)}%`;
+  const ended = slide.type === "video" ? story.video.ended || story.elapsed >= duration : story.elapsed >= duration;
+  if (ended && !stopped) {
+    goToStory(story.index + 1);
+    if (!isStoryOpen()) return;
   }
   story.frameRequest = requestAnimationFrame(storyTick);
 }
@@ -217,17 +422,19 @@ function setStoryPaused(paused) {
 
 function openStoryViewer(slides, { startIndex = 0, trigger = null, cleanup = null } = {}) {
   if (!slides.length) {
-    showToast("Keine Bilder für die Story-Vorschau vorhanden.");
+    showToast("Keine Bilder oder Videos für die Story-Vorschau vorhanden.");
     cleanup?.();
     return;
   }
   closePopover({ returnFocus: false });
   closeSheet();
+  pauseFeedVideos();
   story.slides = slides;
   story.trigger = trigger;
   story.cleanup = cleanup;
   story.lastTick = 0;
   story.holding = false;
+  story.root.dataset.platform = currentPlatformId();
   setStoryPaused(false);
   story.root.hidden = false;
   fitStoryFrame();
@@ -241,6 +448,8 @@ function closeStoryViewer() {
   if (!isStoryOpen()) return;
   cancelAnimationFrame(story.frameRequest);
   story.root.hidden = true;
+  story.video.pause();
+  story.video.removeAttribute("src");
   story.image.removeAttribute("src");
   story.cleanup?.();
   story.cleanup = null;
@@ -259,15 +468,20 @@ function openPostStory(postId) {
   openStoryViewer(slidesFromPosts([post]), { trigger: getPostElement(postId)?.querySelector('[data-action="menu"]') });
 }
 
-async function openTestStory(files) {
-  const results = await Promise.allSettled([...files].filter((file) => file.type.startsWith("image/")).map(loadImageFile));
+async function openTestStory(files, trigger) {
+  const results = await Promise.allSettled(files.filter(isMediaFile).map(loadMediaFile));
   const loaded = results.filter((result) => result.status === "fulfilled").map((result) => result.value);
   if (results.length > loaded.length) showToast("Nicht alle Dateien konnten geladen werden.");
-  const slides = loaded.map((item) => ({ src: item.src, alt: item.name, ratio: mediaRatio(item), author: VIEWER, age: "Jetzt" }));
-  openStoryViewer(slides, {
-    trigger: dom.storyTestInput.closest(".story-bubble"),
-    cleanup: () => loaded.forEach((item) => URL.revokeObjectURL(item.src)),
-  });
+  const slides = loaded.map((item) => ({
+    type: item.type,
+    src: item.src,
+    poster: item.poster,
+    alt: item.name,
+    ratio: mediaRatio(item),
+    author: VIEWER,
+    age: "Jetzt",
+  }));
+  openStoryViewer(slides, { trigger, cleanup: () => loaded.forEach(revokeMedia) });
 }
 
 function handleStoryKeys(event) {
@@ -275,6 +489,15 @@ function handleStoryKeys(event) {
   if (event.key === "ArrowRight") goToStory(story.index + 1);
   else if (event.key === "ArrowLeft") goToStory(story.index - 1);
   else if (event.key === " ") setStoryPaused(!story.paused);
+  else return false;
+  event.preventDefault();
+  return true;
+}
+
+function handleMediaViewerKeys(event) {
+  if (!isMediaViewerOpen()) return false;
+  if (event.key === "ArrowRight") stepMediaViewer(1);
+  else if (event.key === "ArrowLeft") stepMediaViewer(-1);
   else return false;
   event.preventDefault();
   return true;
@@ -311,11 +534,13 @@ function bindStoryEvents() {
     showToast("Antwort gesendet (Simulation)");
   });
 
-  dom.storyTestInput.addEventListener("change", () => {
-    const files = [...dom.storyTestInput.files];
-    dom.storyTestInput.value = "";
-    if (files.length) openTestStory(files);
-  });
+  dom.storyTestInputs.forEach((input) =>
+    input.addEventListener("change", () => {
+      const files = [...input.files];
+      input.value = "";
+      if (files.length) openTestStory(files, input.closest("label"));
+    })
+  );
 
   new ResizeObserver(() => {
     if (isStoryOpen()) fitStoryFrame();

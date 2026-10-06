@@ -62,10 +62,20 @@ function persist(operation) {
 
 // Ältere Einträge (ein Bild pro Beitrag, "createdAt") in das aktuelle Format bringen
 function normalizeOwnRecord(record) {
-  const media = Array.isArray(record.media)
+  const rawMedia = Array.isArray(record.media)
     ? record.media
     : [{ blob: record.blob, name: record.name, width: record.width, height: record.height, alt: record.alt }];
-  if (!media.length || !media.every((item) => item.blob instanceof Blob)) return null;
+  if (!rawMedia.length || !rawMedia.every((item) => item.blob instanceof Blob)) return null;
+  const media = rawMedia.map((item) => ({
+    type: item.type === "video" ? "video" : "image",
+    blob: item.blob,
+    name: item.name,
+    width: item.width,
+    height: item.height,
+    alt: item.alt,
+    duration: item.duration ?? 0,
+    posterBlob: item.posterBlob instanceof Blob ? item.posterBlob : null,
+  }));
   return {
     id: record.id,
     media,

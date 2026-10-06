@@ -31,39 +31,68 @@ function createSection(title) {
   return section;
 }
 
+// Breite der Bildunterschrift im Feed der aktiven Plattform, damit die Vorschau gleich kürzt
 function captionPreviewWidth() {
   const visible = [...dom.posts.querySelectorAll(".caption__collapsed")].find((el) => el.getClientRects().length);
-  return visible?.clientWidth || dom.feed.clientWidth - 28;
+  if (visible) return visible.clientWidth;
+  const width = dom.feed.clientWidth;
+  return { instagram: width - 28, tiktok: width - 96, facebook: width - 24 }[currentPlatformId()];
 }
 
-// Prüft, wie Instagram ein Bild im Feed und im Profilraster beschneiden würde
-function describeCrop(item, frameRatio, { inCarousel = false, isFirst = true } = {}) {
+/* Zuschnitt-Check */
+
+function describeFrameLoss(loss) {
+  const sides = loss.axis === "vertical" ? "oben und unten" : "links und rechts";
+  return `${sides} fehlen ${formatPercent(loss.removed)}`;
+}
+
+// Wie zeigen die drei Plattformen ein Bild oder Video? multi: Teil eines mehrteiligen Beitrags
+function describeCrop(item, { multi = false, index = 0, firstRatio = mediaRatio(item) } = {}) {
   const ratio = mediaRatio(item);
-  const feed = cropLoss(ratio, frameRatio);
+  const active = currentPlatformId();
   const lines = [];
   let level = "ok";
-  if (feed.removed === 0) {
-    lines.push(`Format ${formatRatio(ratio)}: wird im Feed vollständig angezeigt.`);
-  } else {
-    level = "warn";
-    const sides = feed.axis === "vertical" ? "oben und unten" : "links und rechts";
-    const reason =
-      inCarousel && !isFirst
-        ? `Im Karussell gilt das Format des ersten Bildes (${formatRatio(frameRatio)})`
-        : feed.axis === "vertical"
-          ? "Zu hoch für den Feed (höchstens 3:4)"
-          : "Zu breit für den Feed (höchstens 1,91:1)";
-    lines.push(`Format ${formatRatio(ratio)}. ${reason}: ${sides} fehlen zusammen ${formatPercent(feed.removed)}.`);
+  let activeLoss = { axis: null, removed: 0 };
+
+  const kind = isVideo(item) ? `Video (${formatDuration(item.duration)})` : "Bild";
+  lines.push({ text: `${kind} im Format ${formatRatio(ratio)}`, className: "upload-item__format" });
+
+  PLATFORM_ORDER.forEach((id) => {
+    const rules = PLATFORMS[id];
+    let text;
+    let loss = { axis: null, removed: 0 };
+    if (id === "tiktok") {
+      const screen = rules.screenRatio;
+      if (Math.abs(ratio - screen) / screen < 0.03) text = "füllt den Bildschirm";
+      else if (ratio > screen) text = `Ränder oben und unten, ${formatPercent(1 - screen / ratio)} des Bildschirms bleiben frei`;
+      else text = `Ränder links und rechts, ${formatPercent(1 - ratio / screen)} des Bildschirms bleiben frei`;
+    } else if (id === "facebook" && multi) {
+      text = "Collage, der Ausschnitt hängt von der Anordnung ab";
+    } else {
+      const frame = feedFrameRatio(multi && id === "instagram" ? firstRatio : ratio, rules);
+      loss = cropLoss(ratio, frame);
+      text = loss.removed === 0 ? "wird vollständig angezeigt" : describeFrameLoss(loss);
+      if (loss.removed > 0 && multi && id === "instagram" && index > 0) text += " (Format des ersten Bildes)";
+    }
+    if (id === active) {
+      activeLoss = loss;
+      if (loss.removed > 0) level = "warn";
+    }
+    lines.push({ text: `${rules.label}: ${text}`, className: id === active ? "upload-item__crop is-active" : "upload-item__crop" });
+  });
+
+  if (index === 0) {
+    const rules = PLATFORMS[active];
+    const grid = cropLoss(Math.min(ratio, 1.91), rules.gridRatio);
+    if (grid.removed > 0.01) {
+      lines.push({ text: `Profilraster ${rules.label} (${rules.gridLabel}): ${formatPercent(grid.removed)} fehlen`, className: "upload-item__crop" });
+    }
   }
-  if (isFirst) {
-    const grid = cropLoss(Math.min(ratio, INSTAGRAM.feedMaxRatio), INSTAGRAM.gridRatio);
-    if (grid.removed > 0.01) lines.push(`Im Profilraster (3:4) fehlen ${formatPercent(grid.removed)}.`);
-  }
-  if (ratio < 0.62) lines.push("Hoher Screenshot? In der Story-Vorschau (9:16) passt er vermutlich besser.");
-  return { lines, level, feed };
+  if (ratio < 0.62) lines.push({ text: "Hohes Format: passt gut zu TikTok und zur Story-Vorschau (9:16).", className: "upload-item__crop" });
+  return { lines, level, feed: activeLoss };
 }
 
-// Vorschaubild mit markiertem Ausschnitt
+// Vorschaubild mit markiertem Ausschnitt der aktiven Plattform
 function createCropPreview(item, feed, focus) {
   const ratio = mediaRatio(item);
   const preview = createElement("span", "crop-preview");
@@ -75,9 +104,10 @@ function createCropPreview(item, feed, focus) {
     preview.style.height = `${Math.round(72 / ratio)}px`;
   }
   const image = createElement("img", "crop-preview__image");
-  image.src = item.src;
+  image.src = thumbSrc(item);
   image.alt = "";
   preview.append(image);
+  if (isVideo(item)) preview.append(createElement("span", "crop-preview__play", "▶"));
 
   if (feed.removed > 0) {
     const frame = createElement("span", "crop-preview__frame");
@@ -104,14 +134,15 @@ function buildFocusSelect(initial) {
     ["left", "Links"],
     ["right", "Rechts"],
   ].forEach(([value, label]) => {
-    const option = createElement("option", "", label);
-    option.value = value;
+    const option = new Option(label, value);
     option.selected = value === initial;
     select.append(option);
   });
-  const field = createField("Ausschnitt beim Zuschneiden", select, "Bestimmt, welcher Teil sichtbar bleibt, wenn Instagram zuschneidet.");
+  const field = createField("Ausschnitt beim Zuschneiden", select, "Bestimmt, welcher Teil sichtbar bleibt, wenn eine Plattform zuschneidet.");
   return { field, select };
 }
+
+/* Bildunterschrift-Prüfung */
 
 function buildCaptionEditor(initialCaption) {
   const section = createSection("Bildunterschrift");
@@ -124,9 +155,9 @@ function buildCaptionEditor(initialCaption) {
   if (initialCaption) textarea.value = initialCaption.join("\n\n");
 
   const check = createElement("div", "caption-check");
-  const stats = createElement("p", "caption-check__stats");
+  const stats = createElement("ul", "caption-check__stats");
   const warning = createElement("p", "caption-check__warning");
-  const previewLabel = createElement("p", "caption-check__label", "So erscheint der Text eingeklappt im Feed:");
+  const previewLabel = createElement("p", "caption-check__label");
   const previewBox = createElement("div", "caption-check__preview-box");
   const preview = createElement("p", "caption-check__preview");
   previewBox.append(preview);
@@ -140,27 +171,46 @@ function buildCaptionEditor(initialCaption) {
     const text = paragraphs.join("\n");
     const characters = text.length;
     const hashtags = countHashtags(text);
+    const active = currentPlatformId();
 
-    stats.replaceChildren(
-      createElement("span", characters > INSTAGRAM.captionMax ? "is-error" : "", `${numberFormat.format(characters)} / ${numberFormat.format(INSTAGRAM.captionMax)} Zeichen`),
-      " · ",
-      createElement("span", hashtags > INSTAGRAM.hashtagMax ? "is-error" : "", `${hashtags} ${hashtags === 1 ? "Hashtag" : "Hashtags"} (erlaubt: ${INSTAGRAM.hashtagMax})`)
-    );
+    stats.replaceChildren();
     const warnings = [];
-    if (characters > INSTAGRAM.captionMax) warnings.push(`Instagram erlaubt höchstens ${numberFormat.format(INSTAGRAM.captionMax)} Zeichen.`);
-    if (hashtags > INSTAGRAM.hashtagMax) {
-      warnings.push(`Laut aktuellen Leitfäden erlaubt Instagram seit Dezember 2025 höchstens ${INSTAGRAM.hashtagMax} Hashtags pro Beitrag.`);
-    }
+    PLATFORM_ORDER.forEach((id) => {
+      const rules = PLATFORMS[id];
+      const item = createElement("li", id === active ? "is-active" : "");
+      const tooLong = characters > rules.captionMax;
+      const tooManyTags = rules.hashtagMax !== null && hashtags > rules.hashtagMax;
+      item.append(
+        `${rules.label}: `,
+        createElement("span", tooLong ? "is-error" : "", `${numberFormat.format(characters)} / ${numberFormat.format(rules.captionMax)} Zeichen`),
+        " · ",
+        createElement(
+          "span",
+          tooManyTags ? "is-error" : "",
+          `${hashtags} ${hashtags === 1 ? "Hashtag" : "Hashtags"}${rules.hashtagMax !== null ? ` (erlaubt: ${rules.hashtagMax})` : ""}`
+        )
+      );
+      stats.append(item);
+      if (tooLong) warnings.push(`${rules.label} erlaubt höchstens ${numberFormat.format(rules.captionMax)} Zeichen.`);
+      if (tooManyTags) warnings.push(rules.hashtagNote);
+    });
     warning.textContent = warnings.join(" ");
     warning.hidden = warnings.length === 0;
 
+    const rules = currentRules();
+    previewLabel.textContent = `So erscheint der Text eingeklappt bei ${rules.label}:`;
+    preview.className = `caption-check__preview caption-check__preview--${active}`;
     if (!text) {
       preview.textContent = "";
-      hint.textContent = "Ohne Bildunterschrift erscheint unter dem Bild nur die Like-Zeile.";
+      hint.textContent = "Ohne Bildunterschrift erscheint nur der Beitrag selbst.";
       return;
     }
     preview.style.width = `${captionPreviewWidth()}px`;
-    const visible = layoutCollapsedCaption(preview, ACCOUNT.username, text, { interactive: false });
+    const visible = layoutCollapsedCaption(preview, active === "instagram" ? ACCOUNT.username : "", text, {
+      lines: rules.captionLines,
+      moreLabel: rules.moreLabel,
+      interactive: false,
+    });
     if (visible === null) return;
     hint.textContent =
       visible >= text.length
@@ -206,29 +256,29 @@ function buildAdEditor(initialAd) {
   };
 }
 
-// Liste der Bilder mit Zuschnitt-Check, Bildbeschreibung und Sortierung
-function buildMediaList({ items, getCarousel, getFocus, allowSort, allowRemove, onChange }) {
+// Liste der Bilder und Videos mit Zuschnitt-Check, Bildbeschreibung und Sortierung
+function buildMediaList({ items, getMulti, getFocus, allowSort, allowRemove, onChange }) {
   const list = createElement("ul", "upload-list");
 
   const render = () => {
     list.replaceChildren();
-    const carousel = getCarousel();
+    const multi = getMulti();
     const focus = getFocus();
-    const firstFrame = items.length ? clampFeedRatio(mediaRatio(items[0])) : 1;
+    const firstRatio = items.length ? mediaRatio(items[0]) : 1;
 
     items.forEach((item, index) => {
-      const frameRatio = carousel ? firstFrame : clampFeedRatio(mediaRatio(item));
-      const crop = describeCrop(item, frameRatio, { inCarousel: carousel, isFirst: !carousel || index === 0 });
+      const label = item.name || `${isVideo(item) ? "Video" : "Bild"} ${index + 1}`;
+      const crop = describeCrop(item, { multi, index, firstRatio });
       const row = createElement("li", `upload-item upload-item--${crop.level}`);
 
       const meta = createElement("div", "upload-item__meta");
-      meta.append(createElement("span", "upload-item__name", item.name || `Bild ${index + 1}`));
-      crop.lines.forEach((line) => meta.append(createElement("span", "upload-item__crop", line)));
+      meta.append(createElement("span", "upload-item__name", label));
+      crop.lines.forEach((line) => meta.append(createElement("span", line.className, line.text)));
       const alt = createElement("input", "upload-item__alt");
       alt.type = "text";
       alt.value = item.alt ?? "";
-      alt.placeholder = "Bildbeschreibung (optional)";
-      alt.setAttribute("aria-label", `Bildbeschreibung für ${item.name || `Bild ${index + 1}`}`);
+      alt.placeholder = isVideo(item) ? "Beschreibung des Videos (optional)" : "Bildbeschreibung (optional)";
+      alt.setAttribute("aria-label", `Beschreibung für ${label}`);
       alt.addEventListener("input", () => {
         item.alt = alt.value;
       });
@@ -238,7 +288,7 @@ function buildMediaList({ items, getCarousel, getFocus, allowSort, allowRemove, 
       if (allowSort && items.length > 1) {
         const up = createButton("icon-button icon-button--sm");
         up.innerHTML = ICON_UP;
-        up.setAttribute("aria-label", `${item.name || `Bild ${index + 1}`} nach oben`);
+        up.setAttribute("aria-label", `${label} nach oben`);
         up.disabled = index === 0;
         up.addEventListener("click", () => {
           items.splice(index - 1, 0, items.splice(index, 1)[0]);
@@ -247,7 +297,7 @@ function buildMediaList({ items, getCarousel, getFocus, allowSort, allowRemove, 
         });
         const down = createButton("icon-button icon-button--sm");
         down.innerHTML = ICON_DOWN;
-        down.setAttribute("aria-label", `${item.name || `Bild ${index + 1}`} nach unten`);
+        down.setAttribute("aria-label", `${label} nach unten`);
         down.disabled = index === items.length - 1;
         down.addEventListener("click", () => {
           items.splice(index + 1, 0, items.splice(index, 1)[0]);
@@ -259,7 +309,7 @@ function buildMediaList({ items, getCarousel, getFocus, allowSort, allowRemove, 
       if (allowRemove(items)) {
         const remove = createButton("icon-button icon-button--sm");
         remove.innerHTML = ICON_CLOSE;
-        remove.setAttribute("aria-label", `${item.name || `Bild ${index + 1}`} entfernen`);
+        remove.setAttribute("aria-label", `${label} entfernen`);
         remove.addEventListener("click", () => {
           items.splice(index, 1);
           item.onRemove?.();
@@ -278,6 +328,11 @@ function buildMediaList({ items, getCarousel, getFocus, allowSort, allowRemove, 
   return { list, render };
 }
 
+function multiLimitWarning(count) {
+  const exceeded = PLATFORM_ORDER.map((id) => PLATFORMS[id]).filter((rules) => rules.multiMax && count > rules.multiMax);
+  return exceeded.map((rules) => `${rules.label} erlaubt höchstens ${rules.multiMax} Dateien in einem ${rules.multiLabel}.`).join(" ");
+}
+
 /* ------------------------------------------------------------------ */
 /* Neuer Beitrag                                                       */
 /* ------------------------------------------------------------------ */
@@ -293,25 +348,25 @@ function openCreateSheet(trigger, initialFiles = []) {
       const drop = createElement("label", "upload-drop");
       const fileInput = createElement("input", "visually-hidden");
       fileInput.type = "file";
-      fileInput.accept = "image/*";
+      fileInput.accept = "image/*,video/*";
       fileInput.multiple = true;
       const icon = createElement("span", "upload-drop__icon");
       icon.innerHTML = ICON_UPLOAD;
       drop.append(
         fileInput,
         icon,
-        createElement("span", "upload-drop__title", "Bilder oder Screenshots auswählen"),
+        createElement("span", "upload-drop__title", "Bilder, Videos oder Screenshots auswählen"),
         createElement("span", "upload-drop__hint", "oder hierher ziehen, Screenshots auch mit Strg+V (Mac: Cmd+V) einfügen")
       );
 
-      const carousel = createCheckbox(`Alle Bilder als ein Karussell-Beitrag (bis ${INSTAGRAM.carouselMax} Bilder)`, false);
-      carousel.wrapper.hidden = true;
+      const multi = createCheckbox("Alle Dateien in einem Beitrag (Instagram: Karussell, TikTok: Fotobeitrag, Facebook: Collage)", false);
+      multi.wrapper.hidden = true;
       const focus = buildFocusSelect("center");
       focus.field.hidden = true;
 
       const mediaList = buildMediaList({
         items: drafts,
-        getCarousel: () => carousel.input.checked,
+        getMulti: () => multi.input.checked && drafts.length > 1,
         getFocus: () => focus.select.value,
         allowSort: true,
         allowRemove: () => true,
@@ -320,42 +375,40 @@ function openCreateSheet(trigger, initialFiles = []) {
 
       const caption = buildCaptionEditor(null);
       const ad = buildAdEditor(null);
-      const limit = createElement("p", "composer-error");
+      const options = createSection("Darstellung");
+      const limit = createElement("p", "composer-warning");
       limit.hidden = true;
       const publish = createButton("button-primary", "Teilen");
       publish.disabled = true;
 
       function update() {
         const count = drafts.length;
-        carousel.wrapper.hidden = count < 2;
-        const asCarousel = carousel.input.checked && count > 1;
-        const tooMany = asCarousel && count > INSTAGRAM.carouselMax;
-        limit.textContent = tooMany ? `Ein Karussell darf höchstens ${INSTAGRAM.carouselMax} Bilder enthalten.` : "";
-        limit.hidden = !tooMany;
-        const anyCrop = drafts.some((item) => {
-          const frame = asCarousel ? clampFeedRatio(mediaRatio(drafts[0])) : clampFeedRatio(mediaRatio(item));
-          return cropLoss(mediaRatio(item), frame).removed > 0;
-        });
-        focus.field.hidden = !anyCrop;
-        publish.disabled = count === 0 || tooMany;
-        publish.textContent = count > 1 && !asCarousel ? `${count} Beiträge teilen` : "Teilen";
+        multi.wrapper.hidden = count < 2;
+        const asOne = multi.input.checked && count > 1;
+        limit.textContent = asOne ? multiLimitWarning(count) : "";
+        limit.hidden = !limit.textContent;
+        const firstRatio = count ? mediaRatio(drafts[0]) : 1;
+        focus.field.hidden = !drafts.some((item, index) => describeCrop(item, { multi: asOne, index, firstRatio }).feed.removed > 0);
+        options.hidden = multi.wrapper.hidden && focus.field.hidden;
+        publish.disabled = count === 0;
+        publish.textContent = count > 1 && !asOne ? `${count} Beiträge teilen` : "Teilen";
       }
 
       const addFiles = async (files) => {
-        const images = [...files].filter((file) => file.type.startsWith("image/"));
-        if (images.length < files.length) showToast("Nur Bilddateien können hinzugefügt werden.");
-        const results = await Promise.allSettled(images.map(loadImageFile));
+        const media = [...files].filter(isMediaFile);
+        if (media.length < files.length) showToast("Nur Bilder und Videos können hinzugefügt werden.");
+        const results = await Promise.allSettled(media.map(loadMediaFile));
         results.forEach((result) => {
           if (result.status === "rejected") {
-            showToast(`„${result.reason.message}“ konnte nicht geladen werden.`);
+            showToast(`„${result.reason.message}“ konnte nicht geladen werden. Der Browser unterstützt das Format eventuell nicht.`);
             return;
           }
           const draft = { ...result.value, alt: "" };
           if (closed) {
-            URL.revokeObjectURL(draft.src);
+            revokeMedia(draft);
             return;
           }
-          draft.onRemove = () => URL.revokeObjectURL(draft.src);
+          draft.onRemove = () => revokeMedia(draft);
           drafts.push(draft);
         });
         mediaList.render();
@@ -377,7 +430,7 @@ function openCreateSheet(trigger, initialFiles = []) {
         drop.classList.remove("is-dragging");
         addFiles(event.dataTransfer.files);
       });
-      carousel.input.addEventListener("change", () => {
+      multi.input.addEventListener("change", () => {
         mediaList.render();
         update();
       });
@@ -388,12 +441,16 @@ function openCreateSheet(trigger, initialFiles = []) {
         const adValue = ad.getAd();
         const now = Date.now();
         const toMedia = (draft) => ({
+          type: draft.type,
           src: draft.src,
           blob: draft.blob,
           name: draft.name,
           width: draft.width,
           height: draft.height,
-          alt: draft.alt.trim() || `Hochgeladenes Bild: ${draft.name}`,
+          duration: draft.duration ?? 0,
+          poster: draft.poster ?? null,
+          posterBlob: draft.posterBlob ?? null,
+          alt: draft.alt.trim() || `Hochgeladen: ${draft.name}`,
         });
         const createPost = (media, index) => ({
           id: createPostId(),
@@ -406,9 +463,12 @@ function openCreateSheet(trigger, initialFiles = []) {
           comments: [],
           ad: adValue.enabled ? adValue : null,
           focus: focus.select.value,
+          views: 0,
+          saves: 0,
+          shares: 0,
         });
         const newPosts =
-          carousel.input.checked && drafts.length > 1
+          multi.input.checked && drafts.length > 1
             ? [createPost(drafts.map(toMedia), 0)]
             : drafts.map((draft, index) => createPost([toMedia(draft)], index));
         published = true;
@@ -416,8 +476,8 @@ function openCreateSheet(trigger, initialFiles = []) {
         addPosts(newPosts);
       });
 
-      const options = createSection("Darstellung");
-      options.append(carousel.wrapper, focus.field);
+      options.append(multi.wrapper, focus.field);
+      options.hidden = true;
       body.append(drop, mediaList.list, options, caption.section, ad.section, limit, publish);
       requestAnimationFrame(caption.update);
       if (initialFiles.length) addFiles(initialFiles);
@@ -428,7 +488,7 @@ function openCreateSheet(trigger, initialFiles = []) {
       onClose: () => {
         closed = true;
         activeComposer = null;
-        if (!published) drafts.forEach((draft) => URL.revokeObjectURL(draft.src));
+        if (!published) drafts.forEach(revokeMedia);
       },
     }
   );
@@ -448,7 +508,7 @@ function openEditSheet(post, trigger) {
       const focus = buildFocusSelect(post.focus ?? "center");
       const mediaList = buildMediaList({
         items,
-        getCarousel: () => items.length > 1,
+        getMulti: () => items.length > 1,
         getFocus: () => focus.select.value,
         allowSort: post.isOwn,
         allowRemove: (list) => post.isOwn && list.length > 1,
@@ -507,8 +567,19 @@ function openEditSheet(post, trigger) {
           focus: focus.select.value,
         };
         if (post.isOwn) {
-          removed.forEach((item) => URL.revokeObjectURL(item.src));
-          post.media = items.map(({ src, blob, name, width, height, alt }) => ({ src, blob, name, width, height, alt }));
+          removed.forEach(revokeMedia);
+          post.media = items.map(({ type, src, blob, name, width, height, alt, duration, poster, posterBlob }) => ({
+            type,
+            src,
+            blob,
+            name,
+            width,
+            height,
+            alt,
+            duration,
+            poster,
+            posterBlob,
+          }));
         }
         closeSheet();
         updatePost(post, edits);
@@ -554,19 +625,18 @@ function openReorderSheet(trigger) {
           item.draggable = true;
           item.dataset.index = String(index);
           const thumb = createElement("img", "reorder-item__thumb");
-          thumb.src = post.media[0].src;
+          thumb.src = thumbSrc(post.media[0]);
           thumb.alt = "";
           const label = createElement("span", "reorder-item__label");
           const firstLine = resolveAccount(captionParagraphs(post)[0] ?? "Ohne Bildunterschrift");
+          const kinds = [
+            post.isOwn ? "Eigener Beitrag" : "Kampagne",
+            post.media.length > 1 ? `${post.media.length} Dateien` : isVideo(post.media[0]) ? "Video" : "",
+            post.ad?.enabled ? "Anzeige" : "",
+          ];
           label.append(
             createElement("span", "reorder-item__title", `${index + 1}. ${firstLine}`),
-            createElement(
-              "span",
-              "reorder-item__meta",
-              [post.isOwn ? "Eigener Beitrag" : "Kampagne", post.media.length > 1 ? `Karussell, ${post.media.length} Bilder` : "", post.ad?.enabled ? "Anzeige" : ""]
-                .filter(Boolean)
-                .join(" · ")
-            )
+            createElement("span", "reorder-item__meta", kinds.filter(Boolean).join(" · "))
           );
           const up = createButton("icon-button icon-button--sm");
           up.innerHTML = ICON_UP;

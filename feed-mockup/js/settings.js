@@ -1,8 +1,10 @@
 "use strict";
 
-/* Einstellungen, Dunkelmodus, Gerätegröße und Präsentationsmodus */
+/* Einstellungen, Plattform, Dunkelmodus, Gerätegröße, Simulationsmenü und Präsentationsmodus */
 
 const SETTINGS_DEFAULTS = {
+  platform: "instagram",
+  tiktokZones: false,
   dark: false,
   device: "auto",
   realisticCrop: true,
@@ -11,6 +13,8 @@ const SETTINGS_DEFAULTS = {
 };
 
 const AUTO_SCROLL_SPEEDS = { off: 0, slow: 25, medium: 50, fast: 90 };
+// TikTok rastet pro Beitrag ein, deshalb blättert die Präsentation dort im Takt weiter (Millisekunden pro Beitrag)
+const AUTO_PAGE_INTERVALS = { off: 0, slow: 8000, medium: 5000, fast: 3000 };
 
 const settings = { ...SETTINGS_DEFAULTS };
 
@@ -40,6 +44,7 @@ function loadSettings(storedSettings) {
       if (typeof savedSettings[key] === typeof SETTINGS_DEFAULTS[key]) settings[key] = savedSettings[key];
     });
   }
+  if (!PLATFORMS[settings.platform]) settings.platform = SETTINGS_DEFAULTS.platform;
   const savedAccount = storedSettings.get("account");
   if (savedAccount && typeof savedAccount === "object") {
     Object.keys(ACCOUNT_DEFAULTS).forEach((key) => {
@@ -55,7 +60,23 @@ function loadSettings(storedSettings) {
 
 function applyTheme() {
   dom.screen.dataset.theme = settings.dark ? "dark" : "light";
-  document.querySelector('meta[name="theme-color"]').content = settings.dark ? "#000000" : "#ffffff";
+  const dark = settings.dark || settings.platform === "tiktok";
+  document.querySelector('meta[name="theme-color"]').content = dark ? "#000000" : "#ffffff";
+}
+
+// Wechselt die Oberfläche; Beiträge, Likes und Kommentare bleiben dieselben
+function applyPlatform() {
+  dom.screen.dataset.platform = currentPlatformId();
+  closeStoryViewer();
+  closeMediaViewer();
+  closeProfileView({ returnFocus: false });
+  closeSearch({ returnFocus: false });
+  closePopover({ returnFocus: false });
+  applyTheme();
+  updateAccountChrome();
+  renderFeed();
+  setActiveNav("home");
+  dom.feed.scrollTop = 0;
 }
 
 function applyDevice() {
@@ -81,9 +102,21 @@ function applyDevice() {
 }
 
 function updateAccountChrome() {
-  dom.navAccountAvatar.replaceChildren(createAvatar(ACCOUNT.username, "avatar--nav"));
+  document.querySelectorAll("#nav-account-avatar, [data-account-avatar]").forEach((slot) => {
+    slot.replaceChildren(createAvatar(ACCOUNT.username, "avatar--nav"));
+  });
   dom.accountStoryAvatar.replaceChildren(createAvatar(ACCOUNT.username, "avatar--story-lg"));
   dom.accountStoryName.textContent = ACCOUNT.username;
+  updateFacebookStoryCard();
+}
+
+// Story-Karte bei Facebook zeigt das erste Bild des Feeds
+function updateFacebookStoryCard() {
+  const source = POSTS.find((post) => thumbSrc(post.media[0]));
+  if (source) dom.fbStoryImage.src = thumbSrc(source.media[0]);
+  else dom.fbStoryImage.removeAttribute("src");
+  dom.fbStoryAvatar.replaceChildren(createAvatar(ACCOUNT.username, "avatar--sm"));
+  dom.fbStoryName.textContent = accountLabel("facebook");
 }
 
 function onAccountChanged() {
@@ -99,6 +132,7 @@ function syncSettingControls() {
   document.querySelectorAll("[data-setting]").forEach((control) => {
     const key = control.dataset.setting;
     if (control.type === "checkbox") control.checked = settings[key] === true;
+    else if (control.type === "radio") control.checked = control.value === settings[key];
     else control.value = settings[key];
   });
 }
@@ -109,6 +143,8 @@ function changeSetting(key, value) {
   if (key === "dark") applyTheme();
   if (key === "device") applyDevice();
   if (key === "realisticCrop") rerenderFeed();
+  if (key === "platform") applyPlatform();
+  if (key === "tiktokZones") dom.posts.querySelectorAll(".tt-zones").forEach((zones) => (zones.hidden = !value));
   syncSettingControls();
   saveSettings();
 }
@@ -125,7 +161,7 @@ function sanitizeUsername(value) {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9._]/g, "")
-    .slice(0, INSTAGRAM.usernameMax);
+    .slice(0, GENERAL.usernameMax);
 }
 
 function createSettingCheckbox(key, label) {
@@ -175,7 +211,7 @@ function openSettingsSheet(trigger) {
         return input;
       };
 
-      const username = textInput("username", { maxLength: INSTAGRAM.usernameMax });
+      const username = textInput("username", { maxLength: GENERAL.usernameMax });
       username.autocomplete = "off";
       username.spellcheck = false;
       username.addEventListener("change", () => {
@@ -198,7 +234,7 @@ function openSettingsSheet(trigger) {
 
       const bio = createElement("textarea", "field__control field__control--textarea");
       bio.rows = 3;
-      bio.maxLength = INSTAGRAM.bioMax;
+      bio.maxLength = GENERAL.bioMax;
       bio.value = ACCOUNT.bio;
       bindText(bio, "bio");
 
@@ -227,7 +263,7 @@ function openSettingsSheet(trigger) {
         createField("Benutzername", username, "Nur Kleinbuchstaben, Ziffern, Punkt und Unterstrich."),
         createField("Name im Profil", displayName),
         createField("Ort unter dem Namen im Beitrag", locationInput, "Leer lassen, um keinen Ort anzuzeigen."),
-        createField(`Profiltext (bis ${INSTAGRAM.bioMax} Zeichen)`, bio),
+        createField(`Profiltext (bis ${GENERAL.bioMax} Zeichen)`, bio),
         numbersRow,
         verified.wrapper
       );
@@ -239,9 +275,14 @@ function openSettingsSheet(trigger) {
       fillDeviceSelect(device);
       const deviceField = createField("Gerätegröße", device, mobileQuery.matches ? "Auf dem Smartphone nutzt die Simulation immer den ganzen Bildschirm." : "");
       device.disabled = mobileQuery.matches;
+      const platform = createElement("select", "field__control");
+      platform.dataset.setting = "platform";
+      PLATFORM_ORDER.forEach((id) => platform.append(new Option(PLATFORMS[id].label, id)));
       display.append(
-        createSettingCheckbox("dark", "Dunkelmodus"),
-        createSettingCheckbox("realisticCrop", "Zuschnitt wie Instagram (Feed zwischen 3:4 und 1,91:1)"),
+        createField("Plattform", platform, "Beiträge, Likes und Kommentare bleiben beim Wechsel erhalten."),
+        createSettingCheckbox("dark", "Dunkelmodus (der TikTok-Feed ist immer dunkel)"),
+        createSettingCheckbox("realisticCrop", "Zuschnitt wie die Plattform (Instagram 3:4 bis 1,91:1, Facebook 4:5 bis 1,91:1)"),
+        createSettingCheckbox("tiktokZones", "Verdeckte Bereiche im TikTok-Feed anzeigen"),
         deviceField
       );
 
@@ -286,6 +327,87 @@ function openSettingsSheet(trigger) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Simulationsmenü (auf allen Plattformen über "Simulation" erreichbar) */
+/* ------------------------------------------------------------------ */
+
+function openToolsSheet(trigger) {
+  closePopover({ returnFocus: false });
+  openSheet(
+    "Simulation",
+    (body) => {
+      const platformSection = createSection("Plattform");
+      const group = createElement("div", "segmented segmented--sheet");
+      group.setAttribute("role", "radiogroup");
+      group.setAttribute("aria-label", "Plattform");
+      PLATFORM_ORDER.forEach((id) => {
+        const option = createElement("label", "segmented__option");
+        const input = document.createElement("input");
+        input.type = "radio";
+        input.name = "sheet-platform";
+        input.value = id;
+        input.dataset.setting = "platform";
+        option.append(input, createElement("span", "", PLATFORMS[id].label));
+        group.append(option);
+      });
+      platformSection.append(group);
+
+      const tools = createElement("div", "tools-list");
+      [
+        ["settings", "Einstellungen"],
+        ["profile", "Profilansicht"],
+        ["story", "Story-Vorschau"],
+        ["reorder", "Reihenfolge im Feed"],
+        ["notifications", "Benachrichtigungen"],
+        ["present", "Präsentation starten"],
+      ].forEach(([command, label]) => {
+        const row = createSheetRow(label);
+        row.insertAdjacentHTML("beforeend", ICON_CHEVRON);
+        row.addEventListener("click", () => {
+          sheetTrigger = null;
+          closeSheet();
+          commands[command](trigger);
+        });
+        tools.append(row);
+      });
+
+      const data = createSection("Daten");
+      updateOwnPostsInfo();
+      const info = createElement("p", "own-posts__info", `${dom.ownPostsInfo.textContent} ${dom.campaignInfo.textContent}`);
+      const actions = createElement("div", "own-posts__actions own-posts__actions--wrap");
+      const exportButton = createButton("own-posts__button", "Exportieren");
+      exportButton.disabled = ownPosts().length === 0;
+      exportButton.addEventListener("click", exportOwnPosts);
+      const importLabel = createElement("label", "own-posts__button");
+      const importInput = createElement("input", "visually-hidden");
+      importInput.type = "file";
+      importInput.accept = "application/json,.json";
+      importLabel.append(importInput, "Importieren");
+      importInput.addEventListener("change", () => {
+        const [file] = importInput.files;
+        importInput.value = "";
+        if (file) {
+          closeSheet();
+          importOwnPosts(file);
+        }
+      });
+      const restore = createButton("own-posts__button", "Kampagnenbeiträge wiederherstellen");
+      restore.disabled = missingCampaignPosts().length === 0;
+      restore.addEventListener("click", restoreCampaignPosts);
+      const deleteAll = createButton("own-posts__button own-posts__button--danger", "Alle Beiträge löschen");
+      deleteAll.disabled = POSTS.length === 0;
+      deleteAll.addEventListener("click", () => openDeleteAllSheet(trigger));
+      actions.append(exportButton, importLabel, restore, deleteAll);
+      data.append(info, actions);
+
+      body.append(platformSection, tools, data);
+      syncSettingControls();
+    },
+    trigger,
+    { tall: true }
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Präsentationsmodus                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -295,6 +417,7 @@ const presentation = {
   lastTick: 0,
   position: 0,
   startTimer: 0,
+  pageTimer: 0,
   hideTimer: 0,
 };
 
@@ -307,7 +430,13 @@ function showPresentationExit() {
 function stopAutoScroll() {
   cancelAnimationFrame(presentation.frameRequest);
   clearTimeout(presentation.startTimer);
+  clearInterval(presentation.pageTimer);
   presentation.frameRequest = 0;
+  presentation.pageTimer = 0;
+}
+
+function autoScrollActive() {
+  return Boolean(presentation.frameRequest || presentation.pageTimer);
 }
 
 function autoScrollTick(timestamp) {
@@ -325,6 +454,18 @@ function autoScrollTick(timestamp) {
 
 function startAutoScroll() {
   stopAutoScroll();
+  if (currentPlatformId() === "tiktok") {
+    const interval = AUTO_PAGE_INTERVALS[settings.autoScroll];
+    if (!interval) return;
+    presentation.pageTimer = setInterval(() => {
+      if (dom.feed.scrollTop + dom.feed.clientHeight >= dom.feed.scrollHeight - 2) {
+        stopAutoScroll();
+        return;
+      }
+      dom.feed.scrollBy({ top: dom.feed.clientHeight, behavior: "smooth" });
+    }, interval);
+    return;
+  }
   if (!AUTO_SCROLL_SPEEDS[settings.autoScroll]) return;
   presentation.position = dom.feed.scrollTop;
   presentation.lastTick = 0;
@@ -337,6 +478,7 @@ function startPresentation() {
   closeSearch({ returnFocus: false });
   closeProfileView({ returnFocus: false });
   closeStoryViewer();
+  closeMediaViewer();
   presentation.active = true;
   dom.body.classList.add("is-presenting");
   dom.presentationExit.hidden = false;
@@ -369,7 +511,7 @@ function bindPresentationEvents() {
   );
   // Eingriffe des Publikums oder der vortragenden Person stoppen das automatische Scrollen
   ["wheel", "touchstart", "pointerdown"].forEach((type) =>
-    dom.feed.addEventListener(type, () => presentation.frameRequest && stopAutoScroll(), { passive: true })
+    dom.feed.addEventListener(type, () => autoScrollActive() && stopAutoScroll(), { passive: true })
   );
   document.addEventListener("fullscreenchange", () => {
     if (!document.fullscreenElement && presentation.active && settings.fullscreen) stopPresentation();

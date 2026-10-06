@@ -7,9 +7,10 @@
 /* ------------------------------------------------------------------ */
 
 let searchIndex = [];
+let searchTrigger = null;
 
 function rebuildSearchIndex() {
-  const entries = [{ type: "account", name: ACCOUNT.username, meta: "Profil ansehen", action: "profile" }];
+  const entries = [{ type: "account", name: accountLabel(), meta: "Profil ansehen", action: "profile" }];
   const seen = new Set([ACCOUNT.username]);
   POSTS.forEach((post) => {
     post.comments.forEach((comment) => {
@@ -60,7 +61,7 @@ function renderSearchResults(query) {
     button.append(text);
     button.addEventListener("click", () => {
       closeSearch({ returnFocus: false });
-      if (entry.action === "profile") openProfileView(dom.searchToggle);
+      if (entry.action === "profile") openProfileView(searchTrigger);
       else focusPost(entry.postId);
     });
     item.append(button);
@@ -68,7 +69,8 @@ function renderSearchResults(query) {
   });
 }
 
-function openSearch() {
+function openSearch(trigger = dom.searchToggle) {
+  searchTrigger = trigger;
   closePopover({ returnFocus: false });
   closeProfileView({ returnFocus: false });
   rebuildSearchIndex();
@@ -84,15 +86,15 @@ function closeSearch({ returnFocus = true } = {}) {
   dom.searchPanel.hidden = true;
   dom.searchToggle.setAttribute("aria-expanded", "false");
   setActiveNav("home");
-  if (returnFocus) dom.searchToggle.focus();
+  if (returnFocus && searchTrigger?.isConnected) searchTrigger.focus();
 }
 
 /* ------------------------------------------------------------------ */
 /* Benachrichtigungen und Profil-Panel                                 */
 /* ------------------------------------------------------------------ */
 
-function renderNotifications() {
-  dom.notificationList.replaceChildren();
+function renderNotifications(list = dom.notificationList, onSelect = () => closePopover({ returnFocus: false })) {
+  list.replaceChildren();
   NOTIFICATIONS.forEach((entry) => {
     const item = createElement("li");
     const text = createElement("span");
@@ -104,7 +106,7 @@ function renderNotifications() {
       const button = createButton("notification-button");
       button.append(createAvatar(entry.user, "avatar--sm"), text);
       button.addEventListener("click", () => {
-        closePopover({ returnFocus: false });
+        onSelect();
         if (getPost(entry.postId)) focusPost(entry.postId);
         else showToast("Dieser Beitrag wurde gelöscht.");
       });
@@ -112,8 +114,25 @@ function renderNotifications() {
     } else {
       item.append(createAvatar(entry.user, "avatar--sm"), text);
     }
-    dom.notificationList.append(item);
+    list.append(item);
   });
+}
+
+function openNotificationsSheet(trigger) {
+  closePopover({ returnFocus: false });
+  markNotificationsRead();
+  openSheet(
+    "Benachrichtigungen",
+    (body) => {
+      const list = createElement("ul", "notification-list notification-list--sheet");
+      renderNotifications(list, () => {
+        sheetTrigger = null;
+        closeSheet();
+      });
+      body.append(list);
+    },
+    trigger
+  );
 }
 
 function markNotificationsRead() {
@@ -160,7 +179,7 @@ function updateProfileStats() {
     const item = createElement("li");
     const button = createButton("saved-list__button");
     const thumb = createElement("img", "saved-list__thumb");
-    thumb.src = post.media[0].src;
+    thumb.src = thumbSrc(post.media[0]);
     thumb.alt = "";
     thumb.width = 36;
     thumb.height = 45;
@@ -188,7 +207,8 @@ async function exportOwnPosts() {
         id: post.id,
         media: await Promise.all(
           post.media.map(async (item) => ({
-            image: await blobToDataUrl(item.blob),
+            type: item.type,
+            data: await blobToDataUrl(item.blob),
             name: item.name,
             alt: item.alt,
           }))
@@ -205,7 +225,7 @@ async function exportOwnPosts() {
       };
     })
   );
-  const data = { format: "feed-simulation", version: 2, exportedAt: new Date().toISOString(), posts: entries };
+  const data = { format: "feed-simulation", version: 3, exportedAt: new Date().toISOString(), posts: entries };
   const date = new Date().toISOString().slice(0, 10);
   downloadFile(new Blob([JSON.stringify(data)], { type: "application/json" }), `feed-simulation-beitraege-${date}.json`);
   showToast(posts.length === 1 ? "1 Beitrag exportiert" : `${posts.length} Beiträge exportiert`);
@@ -218,10 +238,10 @@ async function importEntry(entry) {
   if (!rawMedia.length) throw new Error("Keine Bilder");
   const media = await Promise.all(
     rawMedia.map(async (raw) => {
-      const blob = dataUrlToBlob(raw.image);
-      const name = typeof raw.name === "string" ? raw.name : "Bild";
-      // Abmessungen aus dem Bild selbst lesen, das prüft zugleich, ob es sich laden lässt
-      const loaded = await loadImageFile(new File([blob], name, { type: blob.type }));
+      const blob = dataUrlToBlob(raw.data ?? raw.image);
+      const name = typeof raw.name === "string" ? raw.name : "Datei";
+      // Abmessungen aus der Datei selbst lesen, das prüft zugleich, ob sie sich laden lässt
+      const loaded = await loadMediaFile(new File([blob], name, { type: blob.type }));
       return { ...loaded, alt: typeof raw.alt === "string" && raw.alt ? raw.alt : `Hochgeladenes Bild: ${name}` };
     })
   );
@@ -299,6 +319,10 @@ const navActions = {
   search: () => (dom.searchPanel.hidden ? openSearch() : closeSearch()),
   create: (button) => openCreateSheet(button),
   reels: () => showToast("Reels sind in dieser Simulation nicht enthalten."),
+  friends: () => showToast("Die Freunde-Ansicht ist in dieser Simulation nicht enthalten."),
+  video: () => showToast("Die Video-Ansicht ist in dieser Simulation nicht enthalten. Videos erscheinen im Feed."),
+  inbox: (button) => openNotificationsSheet(button),
+  notifications: (button) => openNotificationsSheet(button),
   profile: (button) => (isProfileViewOpen() ? closeProfileView() : openProfileView(button)),
 };
 
@@ -308,6 +332,12 @@ const commands = {
   reorder: (trigger) => openReorderSheet(trigger),
   settings: (trigger) => openSettingsSheet(trigger),
   present: () => startPresentation(),
+  tools: (trigger) => openToolsSheet(trigger),
+  search: (trigger) => openSearch(trigger),
+  notifications: (trigger) => openNotificationsSheet(trigger),
+  create: (trigger) => openCreateSheet(trigger),
+  messages: () => showToast("Nachrichten sind in dieser Simulation nicht enthalten."),
+  following: () => showToast("In der Simulation gibt es nur den Feed „Für dich“."),
 };
 
 function bindNavigation() {
@@ -321,7 +351,7 @@ function bindNavigation() {
 }
 
 function bindHeaderEvents() {
-  dom.searchToggle.addEventListener("click", () => (dom.searchPanel.hidden ? openSearch() : closeSearch()));
+  dom.searchToggle.addEventListener("click", () => (dom.searchPanel.hidden ? openSearch(dom.searchToggle) : closeSearch()));
   dom.searchClose.addEventListener("click", () => closeSearch());
   dom.searchInput.addEventListener("input", () => renderSearchResults(dom.searchInput.value));
   dom.searchForm.addEventListener("submit", (event) => {
@@ -355,7 +385,7 @@ function screenshotName(index) {
 }
 
 function handlePaste(event) {
-  const files = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/"));
+  const files = [...(event.clipboardData?.files ?? [])].filter(isMediaFile);
   if (!files.length) return;
   // Text in Eingabefeldern normal einfügen lassen, nur Bilder abfangen
   event.preventDefault();
@@ -367,6 +397,7 @@ function handlePaste(event) {
     showToast(named.length === 1 ? "Screenshot eingefügt" : `${named.length} Screenshots eingefügt`);
   } else {
     closeStoryViewer();
+    closeMediaViewer();
     closeProfileView({ returnFocus: false });
     openCreateSheet(null, named);
   }
@@ -404,6 +435,7 @@ function startClock() {
 
 function handleEscape() {
   if (isStoryOpen()) closeStoryViewer();
+  else if (isMediaViewerOpen()) closeMediaViewer();
   else if (!dom.sheetLayer.hidden) closeSheet();
   else if (openPopoverState) closePopover();
   else if (!dom.searchPanel.hidden) closeSearch();
@@ -427,7 +459,7 @@ function bindGlobalEvents() {
       handleEscape();
       return;
     }
-    if (handleStoryKeys(event)) return;
+    if (handleStoryKeys(event) || handleMediaViewerKeys(event)) return;
     trapSheetFocus(event);
     handleMenuArrows(event);
   });
@@ -461,6 +493,7 @@ function openLinkedPost() {
 async function init() {
   const { ownRecords, storedStates, storedSettings } = await loadStoredData();
   loadSettings(storedSettings);
+  dom.screen.dataset.platform = currentPlatformId();
   applyTheme();
   applyDevice();
 
@@ -480,6 +513,7 @@ async function init() {
   bindNavigation();
   bindPresentationEvents();
   bindProfileViewEvents();
+  bindMediaViewerEvents();
   bindStoryEvents();
   bindGlobalEvents();
   startClock();

@@ -49,11 +49,15 @@ const dom = {
   navAccountAvatar: document.getElementById("nav-account-avatar"),
   accountStoryAvatar: document.getElementById("account-story-avatar"),
   accountStoryName: document.getElementById("account-story-name"),
-  storyTestInput: document.getElementById("story-test-input"),
+  storyTestInputs: document.querySelectorAll(".story-test-input"),
+  fbStoryImage: document.getElementById("fb-story-image"),
+  fbStoryAvatar: document.getElementById("fb-story-avatar"),
+  fbStoryName: document.getElementById("fb-story-name"),
   presentationExit: document.getElementById("presentation-exit"),
 };
 
 const numberFormat = new Intl.NumberFormat("de-DE");
+const compactFormat = new Intl.NumberFormat("de-DE", { notation: "compact", maximumFractionDigits: 1 });
 const decimalFormat = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2 });
 
 const FOCUSABLE =
@@ -119,6 +123,21 @@ function isoTimeAgo(hours) {
 function likesLabel(count) {
   if (count === 0) return "Noch keine „Gefällt mir“-Angaben";
   return `Gefällt ${numberFormat.format(count)} Mal`;
+}
+
+/* Plattform */
+
+function currentPlatformId() {
+  return PLATFORMS[settings.platform] ? settings.platform : "instagram";
+}
+
+function currentRules() {
+  return PLATFORMS[currentPlatformId()];
+}
+
+// Facebook zeigt den Namen der Seite, Instagram und TikTok den Benutzernamen
+function accountLabel(platformId = currentPlatformId()) {
+  return platformId === "facebook" ? ACCOUNT.displayName || ACCOUNT.username : ACCOUNT.username;
 }
 
 /* Account und Avatare */
@@ -191,12 +210,26 @@ function countHashtags(text) {
 
 /* Bilder und Seitenverhältnisse */
 
+function isVideo(item) {
+  return item?.type === "video";
+}
+
+// Vorschaubild eines Mediums (bei Videos das beim Hochladen erzeugte Standbild)
+function thumbSrc(item) {
+  return isVideo(item) ? item.poster ?? "" : item.src;
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(seconds || 0));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
 function loadImageFile(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const image = new Image();
     image.onload = () =>
-      resolve({ src: url, blob: file, name: file.name, width: image.naturalWidth, height: image.naturalHeight });
+      resolve({ type: "image", src: url, blob: file, name: file.name, width: image.naturalWidth, height: image.naturalHeight });
     image.onerror = () => {
       URL.revokeObjectURL(url);
       reject(new Error(file.name));
@@ -205,12 +238,82 @@ function loadImageFile(file) {
   });
 }
 
+// Liest Abmessungen und Dauer eines Videos und erzeugt ein Standbild für Raster und Vorschauen
+function loadVideoFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    let settled = false;
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      URL.revokeObjectURL(url);
+      reject(new Error(file.name));
+    };
+    const timer = setTimeout(fail, 15000);
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.onerror = fail;
+    video.onloadedmetadata = () => {
+      if (!video.videoWidth || !video.videoHeight) {
+        fail();
+        return;
+      }
+      video.currentTime = Math.min(0.5, (video.duration || 1) / 3);
+    };
+    video.onseeked = () => {
+      if (settled) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);
+      canvas.toBlob(
+        (posterBlob) => {
+          settled = true;
+          clearTimeout(timer);
+          resolve({
+            type: "video",
+            src: url,
+            blob: file,
+            name: file.name,
+            width: video.videoWidth,
+            height: video.videoHeight,
+            duration: Number.isFinite(video.duration) ? video.duration : 0,
+            posterBlob,
+            poster: posterBlob ? URL.createObjectURL(posterBlob) : null,
+          });
+        },
+        "image/jpeg",
+        0.85
+      );
+    };
+    video.src = url;
+  });
+}
+
+function loadMediaFile(file) {
+  return file.type.startsWith("video/") ? loadVideoFile(file) : loadImageFile(file);
+}
+
+function isMediaFile(file) {
+  return file.type.startsWith("image/") || file.type.startsWith("video/");
+}
+
+function revokeMedia(item) {
+  if (item.src?.startsWith("blob:")) URL.revokeObjectURL(item.src);
+  if (item.poster?.startsWith("blob:")) URL.revokeObjectURL(item.poster);
+}
+
 function mediaRatio(media) {
   return media.width / media.height;
 }
 
-function clampFeedRatio(ratio) {
-  return clamp(ratio, INSTAGRAM.feedMinRatio, INSTAGRAM.feedMaxRatio);
+// Seitenverhältnis, in dem ein Bild im Feed der Plattform erscheint (TikTok: immer Vollbild)
+function feedFrameRatio(ratio, rules = currentRules()) {
+  if (rules.screenRatio) return rules.screenRatio;
+  return clamp(ratio, rules.feedMinRatio, rules.feedMaxRatio);
 }
 
 // Anteil des Bildes, der beim Einpassen in einen Rahmen verloren geht
@@ -257,8 +360,8 @@ function blobToDataUrl(blob) {
 }
 
 function dataUrlToBlob(dataUrl) {
-  const match = /^data:(image\/[\w.+-]+);base64,(.+)$/s.exec(dataUrl);
-  if (!match) throw new Error("Ungültige Bilddaten");
+  const match = /^data:((?:image|video)\/[\w.+-]+);base64,(.+)$/s.exec(dataUrl);
+  if (!match) throw new Error("Ungültige Mediendaten");
   const binary = atob(match[2]);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);

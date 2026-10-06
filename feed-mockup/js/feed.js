@@ -1,6 +1,7 @@
 "use strict";
 
-/* Feed: Beitragsdaten, Darstellung und Aktionen */
+/* Feed: Beitragsdaten, gemeinsame Darstellungsbausteine und Aktionen.
+   Die plattformspezifische Darstellung der Beiträge steht in platforms.js. */
 
 // Alle Beiträge, die gerade im Feed stehen, in Anzeigereihenfolge
 const POSTS = [];
@@ -21,6 +22,7 @@ function createPostState(post, stored = {}) {
     commentCount: post.commentCount + userComments.length,
     userComments,
     likedComments: new Set(Array.isArray(stored.likedComments) ? stored.likedComments : []),
+    sharesSent: Number.isFinite(stored.sharesSent) ? stored.sharesSent : 0,
   };
 }
 
@@ -38,16 +40,25 @@ function applyEditFields(post, edits) {
   if (typeof edits.focus === "string") post.focus = edits.focus;
 }
 
+function derivedCounts(likes) {
+  return {
+    views: Math.round(likes * DERIVED_COUNTS.views),
+    saves: Math.round(likes * DERIVED_COUNTS.saves),
+    shares: Math.round(likes * DERIVED_COUNTS.shares),
+  };
+}
+
 // Kampagnenbeiträge sind fest im Code; Änderungen liegen als "edits" im Zustand
 function buildCampaignPost(base, edits = null) {
   const post = {
     ...base,
-    media: base.media.map((item) => ({ ...item })),
+    media: base.media.map((item) => ({ type: "image", ...item })),
     isOwn: false,
     caption: null,
     ad: null,
     focus: "center",
     edits,
+    ...derivedCounts(base.likes),
   };
   applyEditFields(post, edits);
   return post;
@@ -58,12 +69,16 @@ function buildOwnPost(record) {
     id: record.id,
     isOwn: true,
     media: record.media.map((item) => ({
+      type: item.type === "video" ? "video" : "image",
       src: item.src ?? URL.createObjectURL(item.blob),
       blob: item.blob,
       name: item.name,
       width: item.width,
       height: item.height,
       alt: item.alt,
+      duration: item.duration ?? 0,
+      posterBlob: item.posterBlob ?? null,
+      poster: item.poster ?? (item.posterBlob ? URL.createObjectURL(item.posterBlob) : null),
     })),
     caption: record.caption ?? null,
     postedAt: record.postedAt,
@@ -72,13 +87,25 @@ function buildOwnPost(record) {
     comments: [],
     ad: record.ad ?? null,
     focus: record.focus ?? "center",
+    views: 0,
+    saves: 0,
+    shares: 0,
   };
 }
 
 function ownRecord(post) {
   return {
     id: post.id,
-    media: post.media.map(({ blob, name, width, height, alt }) => ({ blob, name, width, height, alt })),
+    media: post.media.map(({ type, blob, name, width, height, alt, duration, posterBlob }) => ({
+      type,
+      blob,
+      name,
+      width,
+      height,
+      alt,
+      duration,
+      posterBlob,
+    })),
     caption: post.caption,
     postedAt: post.postedAt,
     likes: post.likes,
@@ -115,6 +142,18 @@ function createPostId() {
   return `eigen-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Anzeigewerte, die alle Plattformen nutzen
+function displayCounts(post) {
+  const postState = state.get(post.id);
+  return {
+    likes: postState.likes,
+    comments: postState.commentCount,
+    saves: post.saves + (postState.saved ? 1 : 0),
+    shares: post.shares + postState.sharesSent,
+    views: post.views + 1,
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Speichern                                                           */
 /* ------------------------------------------------------------------ */
@@ -129,6 +168,7 @@ function savePostState(postId) {
     saved: postState.saved,
     comments: postState.userComments,
     likedComments: [...postState.likedComments],
+    sharesSent: postState.sharesSent,
   };
   if (!post.isOwn && post.edits) record.edits = post.edits;
   persist(() => storage.put("state", record));
@@ -144,12 +184,18 @@ function saveOrder() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Darstellung                                                         */
+/* Darstellungsbausteine                                               */
 /* ------------------------------------------------------------------ */
 
 function setPressed(button, pressed, labelPressed, labelDefault) {
   button.setAttribute("aria-pressed", String(pressed));
   button.setAttribute("aria-label", pressed ? labelPressed : labelDefault);
+}
+
+function fillFields(root, field, value) {
+  root.querySelectorAll(`[data-field="${field}"]`).forEach((el) => {
+    el.textContent = value;
+  });
 }
 
 function renderComment(comment, { extra = false, isNew = false } = {}) {
@@ -163,40 +209,70 @@ function renderComment(comment, { extra = false, isNew = false } = {}) {
   return item;
 }
 
+// Kommentarliste eines Beitrags (vorgegebene und eigene), mit gespeicherten Kommentar-Likes
+function fillCommentList(list, post, { collapseAfter = Infinity } = {}) {
+  const postState = state.get(post.id);
+  list.replaceChildren();
+  post.comments.forEach((comment, i) => list.append(renderComment(comment, { extra: i >= collapseAfter })));
+  postState.userComments.forEach((text) => list.append(renderComment({ author: VIEWER, text })));
+  list.querySelectorAll(".comment__like").forEach((button, i) => {
+    if (postState.likedComments.has(i)) button.setAttribute("aria-pressed", "true");
+  });
+}
+
 function updateCommentsToggle(article, postId) {
   const section = article.querySelector(".comments");
+  if (!section) return;
   const toggle = section.querySelector(".comments__toggle");
   const hasExtra = section.querySelector(".comment.is-extra") !== null;
   const expanded = section.classList.contains("is-expanded");
   toggle.hidden = !hasExtra;
   toggle.setAttribute("aria-expanded", String(expanded));
-  toggle.textContent = expanded
-    ? "Weniger Kommentare anzeigen"
-    : `Alle ${numberFormat.format(state.get(postId).commentCount)} Kommentare ansehen`;
+  toggle.textContent = platformView().commentsToggleLabel(state.get(postId).commentCount, expanded);
 }
 
-function renderMedia(article, post) {
-  const container = article.querySelector(".post__media");
-  const crop = settings.realisticCrop;
-  const firstRatio = mediaRatio(post.media[0]);
-  container.style.setProperty("--media-ratio", String(crop ? clampFeedRatio(firstRatio) : firstRatio));
-  container.classList.toggle("is-cropping", crop);
+function createMediaElement(item, { label, focus, eager = false }) {
+  if (isVideo(item)) {
+    const video = createElement("video", "post__image post__video");
+    video.muted = !videoSound;
+    video.loop = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.setAttribute("aria-label", label);
+    if (item.poster) video.poster = item.poster;
+    video.src = item.src;
+    video.style.objectPosition = focusToPosition(focus);
+    return video;
+  }
+  const image = createElement("img", "post__image");
+  image.loading = eager ? "eager" : "lazy";
+  image.decoding = "async";
+  image.width = item.width;
+  image.height = item.height;
+  image.alt = label;
+  image.src = item.src;
+  image.style.objectPosition = focusToPosition(focus);
+  return image;
+}
+
+function mediaLabel(post, item, index) {
+  const kind = isVideo(item) ? "Video" : "Bild";
+  return post.media.length > 1 ? `${kind} ${index + 1} von ${post.media.length}: ${item.alt}` : item.alt;
+}
+
+// Karussell bzw. Einzelbild. frameRatio null bedeutet: Rahmen füllt den Container (TikTok).
+function renderCarousel(container, post, { frameRatio, cover, dots }) {
+  if (frameRatio) container.style.setProperty("--media-ratio", String(frameRatio));
+  container.classList.toggle("is-cropping", cover);
 
   const track = createElement("div", "carousel__track");
   post.media.forEach((item, index) => {
     const slide = createElement("div", "carousel__slide");
-    const image = createElement("img", "post__image");
-    image.loading = "lazy";
-    image.decoding = "async";
-    image.width = item.width;
-    image.height = item.height;
-    image.alt = post.media.length > 1 ? `Bild ${index + 1} von ${post.media.length}: ${item.alt}` : item.alt;
-    image.src = item.src;
-    image.style.objectPosition = focusToPosition(post.focus);
-    slide.append(image);
+    slide.append(createMediaElement(item, { label: mediaLabel(post, item, index), focus: post.focus }));
     track.append(slide);
   });
   container.prepend(track);
+  addMuteButton(container, post);
 
   if (post.media.length < 2) return;
   container.classList.add("is-carousel");
@@ -213,10 +289,8 @@ function renderMedia(article, post) {
   next.innerHTML = ICON_CHEVRON.replace("sheet-row__chevron", "carousel__icon");
   container.append(counter, prev, next);
 
-  const dots = article.querySelector(".carousel__dots");
   post.media.forEach((_, index) => dots.append(createElement("span", index === 0 ? "carousel__dot is-active" : "carousel__dot")));
-
-  track.addEventListener("scroll", () => updateCarousel(article), { passive: true });
+  track.addEventListener("scroll", () => updateCarousel(container.closest(".post")), { passive: true });
 }
 
 function updateCarousel(article) {
@@ -236,7 +310,49 @@ function scrollCarousel(article, step) {
   track.scrollBy({ left: step * track.clientWidth, behavior: "smooth" });
 }
 
-function renderCaption(article, post) {
+// Facebook zeigt mehrere Fotos als Collage: 2 nebeneinander, 3 = eins oben und zwei unten,
+// 4 = Raster 2 × 2, ab 5 = zwei oben und drei unten, ab 6 mit "+N" auf dem letzten Feld
+function renderCollage(container, post) {
+  const count = post.media.length;
+  const shown = post.media.slice(0, 5);
+  container.classList.add("is-collage", `is-collage-${Math.min(count, 5)}`);
+  container.style.setProperty("--media-ratio", { 2: "2", 3: "1", 4: "1" }[Math.min(count, 5)] ?? "1.2");
+  const grid = createElement("div", "collage");
+  shown.forEach((item, index) => {
+    const cell = createButton("collage__cell");
+    cell.dataset.action = "open-media";
+    cell.dataset.index = String(index);
+    cell.setAttribute("aria-label", `${mediaLabel(post, item, index)}. Groß anzeigen`);
+    const thumb = createElement("img", "collage__image");
+    thumb.src = thumbSrc(item) || item.src;
+    thumb.alt = "";
+    thumb.loading = "lazy";
+    thumb.style.objectPosition = focusToPosition(post.focus);
+    cell.append(thumb);
+    if (isVideo(item)) cell.append(createElement("span", "collage__play", "▶"));
+    if (index === 4 && count > 5) cell.append(createElement("span", "collage__more", `+${count - 5}`));
+    grid.append(cell);
+  });
+  container.prepend(grid);
+}
+
+function addMuteButton(container, post) {
+  if (!post.media.some(isVideo)) return;
+  const mute = createButton("media-mute");
+  mute.dataset.action = "mute";
+  updateMuteButton(mute);
+  container.append(mute);
+}
+
+function updateMuteButton(button) {
+  button.setAttribute("aria-pressed", String(videoSound));
+  button.setAttribute("aria-label", videoSound ? "Ton aus" : "Ton an");
+  button.innerHTML = videoSound ? ICON_SOUND_ON : ICON_SOUND_OFF;
+}
+
+/* Bildunterschrift */
+
+function renderCaption(article, post, { prefix = "" } = {}) {
   const caption = article.querySelector(".caption");
   const paragraphs = captionParagraphs(post).map(resolveAccount);
   if (!paragraphs.length) {
@@ -244,11 +360,12 @@ function renderCaption(article, post) {
     return;
   }
   caption.dataset.text = paragraphs.join("\n");
+  caption.dataset.prefix = prefix;
 
   const full = caption.querySelector(".caption__full");
   paragraphs.forEach((text, index) => {
     const paragraph = createElement("p");
-    if (index === 0) paragraph.append(createElement("span", "caption__username", ACCOUNT.username), " ");
+    if (index === 0 && prefix) paragraph.append(createElement("span", "caption__username", prefix), " ");
     appendRichText(paragraph, text);
     full.append(paragraph);
   });
@@ -258,19 +375,20 @@ function renderCaption(article, post) {
   full.lastElementChild.append(" ", collapse);
 }
 
-// Baut die eingeklappte Bildunterschrift so, dass sie mit "… mehr" in zwei Zeilen passt, wie im Instagram-Feed.
+// Baut die eingeklappte Bildunterschrift so, dass sie mit "… mehr" in die vorgegebene Zeilenzahl passt.
 // Gibt die Zahl der sichtbaren Zeichen zurück (oder null, wenn das Element gerade nicht sichtbar ist).
-function layoutCollapsedCaption(element, username, text, { interactive = true } = {}) {
+function layoutCollapsedCaption(element, prefix, text, { lines = 2, moreLabel = "mehr", interactive = true } = {}) {
   if (!element.getClientRects().length) return null;
 
   const build = (shown, truncated) => {
-    element.replaceChildren(createElement("span", "caption__username", username), " ");
+    element.replaceChildren();
+    if (prefix) element.append(createElement("span", "caption__username", prefix), " ");
     const body = createElement("span", "caption__text");
     appendRichText(body, shown);
     element.append(body);
     if (!truncated) return;
     element.append("… ");
-    const more = interactive ? createButton("caption__toggle", "mehr") : createElement("span", "caption__toggle", "mehr");
+    const more = interactive ? createButton("caption__toggle", moreLabel) : createElement("span", "caption__toggle", moreLabel);
     if (interactive) {
       more.dataset.action = "toggle-caption";
       more.setAttribute("aria-expanded", "false");
@@ -279,7 +397,7 @@ function layoutCollapsedCaption(element, username, text, { interactive = true } 
   };
 
   const lineHeight = parseFloat(getComputedStyle(element).lineHeight) || 18;
-  const maxHeight = lineHeight * 2 + 2;
+  const maxHeight = lineHeight * lines + 2;
   build(text, false);
   if (element.offsetHeight <= maxHeight) return text.length;
 
@@ -301,78 +419,55 @@ function layoutCollapsedCaption(element, username, text, { interactive = true } 
 
 function layoutCaption(article) {
   const caption = article.querySelector(".caption");
-  if (caption.hidden || !caption.dataset.text) return;
-  const collapsed = caption.querySelector(".caption__collapsed");
+  if (!caption || caption.hidden || !caption.dataset.text) return;
   if (!caption.querySelector(".caption__full").hidden) return;
-  layoutCollapsedCaption(collapsed, ACCOUNT.username, caption.dataset.text);
+  const rules = currentRules();
+  layoutCollapsedCaption(caption.querySelector(".caption__collapsed"), caption.dataset.prefix, caption.dataset.text, {
+    lines: rules.captionLines,
+    moreLabel: rules.moreLabel,
+  });
 }
 
 function layoutAllCaptions() {
   dom.posts.querySelectorAll(".post").forEach(layoutCaption);
 }
 
-function renderPost(post) {
-  const article = dom.postTemplate.content.firstElementChild.cloneNode(true);
-  const postState = state.get(post.id);
-  const age = postAgeHours(post);
-  const ageLong = formatAgeLong(age);
-  const fill = (field, value) =>
-    article.querySelectorAll(`[data-field="${field}"]`).forEach((el) => {
-      el.textContent = value;
-    });
-  const ad = post.ad?.enabled === true;
+/* Feed aufbauen */
 
+function platformView() {
+  return PLATFORM_VIEWS[currentPlatformId()];
+}
+
+function renderPost(post) {
+  const article = platformView().renderPost(post);
   article.id = `post-${post.id}`;
   article.dataset.postId = post.id;
-  article.setAttribute("aria-label", `${ad ? "Anzeige" : "Beitrag"} von ${ACCOUNT.username}, ${ageLong}`);
-
-  fillAccountAvatar(article.querySelector('[data-field="avatar"]'));
-  fill("username", ACCOUNT.username);
-  fill("location", ad ? "Gesponsert" : ACCOUNT.location);
-  article.querySelector(".post__location").hidden = !ad && !ACCOUNT.location;
-  article.querySelector('[data-field="verified"]').style.display = ACCOUNT.verified ? "" : "none";
-  fill("age-short", formatAgeShort(age));
-  fill("age-long", ageLong);
-  fill("likes", likesLabel(postState.likes));
-  article.querySelectorAll("time").forEach((time) => {
-    time.dateTime = isoTimeAgo(age);
-  });
-
-  if (ad) {
-    const cta = article.querySelector(".post__cta");
-    cta.hidden = false;
-    fill("cta", post.ad.cta || "Mehr dazu");
-  }
-
-  setPressed(article.querySelector('[data-action="like"]'), postState.liked, "Gefällt mir nicht mehr", "Gefällt mir");
-  setPressed(article.querySelector('[data-action="save"]'), postState.saved, "Aus Gespeichert entfernen", "Speichern");
-  if (post.isOwn) article.querySelector("[data-hide-own]").hidden = true;
-
-  renderMedia(article, post);
-  renderCaption(article, post);
-
-  const list = article.querySelector('[data-field="comments"]');
-  post.comments.forEach((comment, i) => list.append(renderComment(comment, { extra: i >= VISIBLE_COMMENTS })));
-  postState.userComments.forEach((text) => list.append(renderComment({ author: VIEWER, text })));
-  list.querySelectorAll(".comment__like").forEach((button, i) => {
-    if (postState.likedComments.has(i)) button.setAttribute("aria-pressed", "true");
-  });
-
+  if (post.isOwn) article.querySelector("[data-hide-own]")?.setAttribute("hidden", "");
   const input = article.querySelector(".comment-form__input");
-  input.id = `comment-input-${post.id}`;
-  article.querySelector(".comment-form label").htmlFor = input.id;
-
-  updateCommentsToggle(article, post.id);
+  if (input) {
+    input.id = `comment-input-${post.id}`;
+    article.querySelector(".comment-form label").htmlFor = input.id;
+  }
+  refreshCounts(article, post);
   return article;
 }
 
+function refreshCounts(article, post) {
+  platformView().refreshCounts(article, post, displayCounts(post), state.get(post.id));
+}
+
+function observeVideos(root) {
+  root.querySelectorAll("video.post__video").forEach((video) => videoObserver.observe(video));
+}
+
 function renderFeed() {
+  videoObserver.disconnect();
   const fragment = document.createDocumentFragment();
   POSTS.forEach((post) => fragment.append(renderPost(post)));
   dom.posts.replaceChildren(fragment);
-  dom.posts.querySelectorAll(".post__image").forEach((image, index) => {
-    if (index === 0) image.loading = "eager";
-  });
+  const firstImage = dom.posts.querySelector("img.post__image");
+  if (firstImage) firstImage.loading = "eager";
+  observeVideos(dom.posts);
   layoutAllCaptions();
   updateFeedEmpty();
 }
@@ -386,8 +481,10 @@ function rerenderFeed() {
 function rerenderPost(post) {
   const current = getPostElement(post.id);
   if (!current) return;
+  current.querySelectorAll("video").forEach((video) => videoObserver.unobserve(video));
   const article = renderPost(post);
   current.replaceWith(article);
+  observeVideos(article);
   layoutCaption(article);
 }
 
@@ -396,6 +493,7 @@ function insertPostAt(post, index) {
   const next = POSTS[index + 1];
   const article = renderPost(post);
   dom.posts.insertBefore(article, next ? getPostElement(next.id) : null);
+  observeVideos(article);
   layoutCaption(article);
 }
 
@@ -417,9 +515,53 @@ function refreshPostAges() {
     const article = getPostElement(post.id);
     if (!article) return;
     const age = postAgeHours(post);
-    article.querySelector('[data-field="age-short"]').textContent = formatAgeShort(age);
-    article.querySelector('[data-field="age-long"]').textContent = formatAgeLong(age);
+    fillFields(article, "age-short", formatAgeShort(age));
+    fillFields(article, "age-long", formatAgeLong(age));
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Videos                                                              */
+/* ------------------------------------------------------------------ */
+
+let videoSound = false;
+
+// Videos laufen stumm, sobald sie zu mindestens 60 % sichtbar sind, wie in den Apps
+const videoObserver = new IntersectionObserver(
+  (entries) => {
+    entries.forEach((entry) => {
+      const video = entry.target;
+      if (entry.isIntersecting && entry.intersectionRatio >= 0.6 && !video.dataset.userPaused && !document.hidden) {
+        video.play().catch(() => {});
+      } else {
+        video.pause();
+      }
+    });
+  },
+  { root: dom.feed, threshold: [0, 0.6, 1] }
+);
+
+function toggleSound() {
+  videoSound = !videoSound;
+  dom.posts.querySelectorAll("video.post__video").forEach((video) => {
+    video.muted = !videoSound;
+  });
+  dom.posts.querySelectorAll(".media-mute").forEach(updateMuteButton);
+}
+
+function togglePlayback(article) {
+  const track = article.querySelector(".carousel__track");
+  const index = track ? Number(track.dataset.index ?? 0) : 0;
+  const video = article.querySelectorAll(".carousel__slide")[index]?.querySelector("video");
+  if (!video) return;
+  if (video.paused) {
+    delete video.dataset.userPaused;
+    video.play().catch(() => {});
+  } else {
+    video.dataset.userPaused = "true";
+    video.pause();
+  }
+  article.classList.toggle("is-paused", video.paused);
 }
 
 /* ------------------------------------------------------------------ */
@@ -432,11 +574,9 @@ function setLiked(article, liked) {
   if (postState.liked === liked) return;
   postState.liked = liked;
   postState.likes += liked ? 1 : -1;
-
-  const button = article.querySelector('[data-action="like"]');
-  setPressed(button, liked, "Gefällt mir nicht mehr", "Gefällt mir");
-  if (liked) restartAnimation(button, "is-popping");
-  article.querySelector('[data-field="likes"]').textContent = likesLabel(postState.likes);
+  const post = getPost(postId);
+  refreshCounts(article, post);
+  if (liked) article.querySelectorAll('[data-action="like"]').forEach((button) => restartAnimation(button, "is-popping"));
   updateProfileStats();
   savePostState(postId);
 }
@@ -445,19 +585,23 @@ function toggleSave(article) {
   const postId = article.dataset.postId;
   const postState = state.get(postId);
   postState.saved = !postState.saved;
-  const button = article.querySelector('[data-action="save"]');
-  setPressed(button, postState.saved, "Aus Gespeichert entfernen", "Speichern");
-  if (postState.saved) restartAnimation(button, "is-popping");
+  refreshCounts(article, getPost(postId));
+  if (postState.saved) article.querySelectorAll('[data-action="save"]').forEach((button) => restartAnimation(button, "is-popping"));
   showToast(postState.saved ? "Beitrag gespeichert" : "Aus Gespeichert entfernt");
   updateProfileStats();
   savePostState(postId);
 }
 
 function showBurst(article) {
-  restartAnimation(article.querySelector(".post__burst"), "is-bursting");
+  const burst = article.querySelector(".post__burst");
+  if (burst) restartAnimation(burst, "is-bursting");
 }
 
 function goToComments(article) {
+  if (platformView().opensCommentSheet) {
+    openCommentSheet(article);
+    return;
+  }
   const section = article.querySelector(".comments");
   const input = section.querySelector(".comment-form__input");
   section.classList.add("is-expanded");
@@ -479,6 +623,7 @@ function toggleCaption(article) {
   const expand = full.hidden;
   full.hidden = !expand;
   collapsed.hidden = expand;
+  article.classList.toggle("is-caption-open", expand);
   if (expand) {
     full.querySelector(".caption__toggle").focus();
   } else {
@@ -487,33 +632,79 @@ function toggleCaption(article) {
   }
 }
 
-function addComment(article, form) {
-  const input = form.querySelector(".comment-form__input");
-  const text = input.value.trim();
-  if (!text) return;
-
+// Speichert einen neuen Kommentar und gibt das Listenelement zurück
+function storeComment(article, text) {
   const postId = article.dataset.postId;
   const postState = state.get(postId);
   postState.commentCount += 1;
   postState.userComments.push(text);
-
-  article.querySelector(".comments__list").append(renderComment({ author: VIEWER, text }, { isNew: true }));
-  input.value = "";
-  form.querySelector(".comment-form__submit").disabled = true;
-  updateCommentsToggle(article, postId);
+  refreshCounts(article, getPost(postId));
   updateProfileStats();
   savePostState(postId);
+  return renderComment({ author: VIEWER, text }, { isNew: true });
 }
 
-function toggleCommentLike(article, button) {
+function addComment(article, form) {
+  const input = form.querySelector(".comment-form__input");
+  const text = input.value.trim();
+  if (!text) return;
+  article.querySelector(".comments__list").append(storeComment(article, text));
+  input.value = "";
+  form.querySelector(".comment-form__submit").disabled = true;
+  updateCommentsToggle(article, article.dataset.postId);
+}
+
+function toggleCommentLike(article, button, list) {
   const postId = article.dataset.postId;
   const liked = button.getAttribute("aria-pressed") !== "true";
-  const index = [...article.querySelectorAll(".comment__like")].indexOf(button);
+  const index = [...list.querySelectorAll(".comment__like")].indexOf(button);
   button.setAttribute("aria-pressed", String(liked));
   const { likedComments } = state.get(postId);
   if (liked) likedComments.add(index);
   else likedComments.delete(index);
   savePostState(postId);
+}
+
+// TikTok zeigt Kommentare in einem eigenen Panel
+function openCommentSheet(article) {
+  const post = getPost(article.dataset.postId);
+  openSheet(
+    `${numberFormat.format(state.get(post.id).commentCount)} Kommentare`,
+    (body) => {
+      const list = createElement("ul", "comments__list comment-sheet__list");
+      fillCommentList(list, post);
+      list.addEventListener("click", (event) => {
+        const like = event.target.closest(".comment__like");
+        if (like) toggleCommentLike(article, like, list);
+      });
+      const form = createElement("form", "comment-form comment-sheet__form");
+      const input = createElement("input", "comment-form__input");
+      input.type = "text";
+      input.maxLength = 300;
+      input.placeholder = "Kommentar hinzufügen …";
+      input.setAttribute("aria-label", "Kommentar schreiben");
+      const submit = createElement("button", "text-button comment-form__submit", "Posten");
+      submit.type = "submit";
+      submit.disabled = true;
+      input.addEventListener("input", () => {
+        submit.disabled = input.value.trim() === "";
+      });
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const text = input.value.trim();
+        if (!text) return;
+        list.append(storeComment(article, text));
+        dom.sheetTitle.textContent = `${numberFormat.format(state.get(post.id).commentCount)} Kommentare`;
+        input.value = "";
+        submit.disabled = true;
+        list.lastElementChild.scrollIntoView({ block: "nearest" });
+      });
+      form.append(createAvatar(VIEWER, "avatar--xs"), input, submit);
+      body.append(list, form);
+    },
+    article.querySelector('[data-action="comment"]'),
+    { tall: true }
+  );
 }
 
 function hidePost(article) {
@@ -529,6 +720,7 @@ function hidePost(article) {
   notice.append(text, undo);
   article.prepend(notice);
   article.classList.add("is-hidden");
+  article.querySelectorAll("video").forEach((video) => video.pause());
   undo.focus();
 }
 
@@ -546,6 +738,15 @@ function postUrl(id) {
 async function copyPostLink(id) {
   const copied = await copyText(postUrl(id));
   showToast(copied ? "Link in die Zwischenablage kopiert" : "Link konnte nicht kopiert werden");
+}
+
+function countShare(postId) {
+  const postState = state.get(postId);
+  if (!postState) return;
+  postState.sharesSent += 1;
+  const article = getPostElement(postId);
+  if (article) refreshCounts(article, getPost(postId));
+  savePostState(postId);
 }
 
 function openReportSheet(article) {
@@ -618,6 +819,7 @@ function openShareSheet(article) {
       send.addEventListener("click", () => {
         const recipients = [...selected];
         closeSheet();
+        countShare(postId);
         showToast(recipients.length === 1 ? `Gesendet an ${recipients[0]}` : `Gesendet an ${recipients.length} Personen`);
       });
 
@@ -625,6 +827,7 @@ function openShareSheet(article) {
       const copy = createSheetRow("Link kopieren", ICON_LINK);
       copy.addEventListener("click", () => {
         closeSheet();
+        countShare(postId);
         copyPostLink(postId);
       });
       actions.append(copy);
@@ -641,8 +844,8 @@ function openDeleteSheet(article) {
   openConfirmSheet({
     title: "Beitrag löschen?",
     text: post.isOwn
-      ? "Der Beitrag wird mit Bildern, Likes und Kommentaren aus diesem Browser entfernt."
-      : "Der Beitrag wird aus dem Feed entfernt. Im Profil-Panel kannst du die Kampagnenbeiträge jederzeit wiederherstellen.",
+      ? "Der Beitrag wird mit allen Bildern und Videos, Likes und Kommentaren aus diesem Browser entfernt."
+      : "Der Beitrag wird aus dem Feed entfernt. Im Simulationsmenü kannst du die Kampagnenbeiträge jederzeit wiederherstellen.",
     confirmLabel: "Löschen",
     trigger: article.querySelector('[data-action="menu"]'),
     onConfirm: () => {
@@ -660,9 +863,11 @@ function deletePost(postId) {
   if (!post) return;
   POSTS.splice(POSTS.indexOf(post), 1);
   state.delete(postId);
-  getPostElement(postId)?.remove();
+  const element = getPostElement(postId);
+  element?.querySelectorAll("video").forEach((video) => videoObserver.unobserve(video));
+  element?.remove();
   if (post.isOwn) {
-    post.media.forEach((item) => URL.revokeObjectURL(item.src));
+    post.media.forEach(revokeMedia);
     persist(() => Promise.all([storage.delete("posts", postId), storage.delete("state", postId)]));
   } else {
     // Kampagnenbeiträge sind fest im Code; gespeichert wird nur, dass sie gelöscht sind
@@ -670,8 +875,7 @@ function deletePost(postId) {
   }
 }
 
-function openDeleteAllSheet() {
-  const trigger = openPopoverState?.trigger ?? dom.profileToggle;
+function openDeleteAllSheet(trigger = openPopoverState?.trigger ?? dom.profileToggle) {
   closePopover({ returnFocus: false });
   const own = ownPosts().length;
   openConfirmSheet({
@@ -679,7 +883,7 @@ function openDeleteAllSheet() {
     text:
       own > 0
         ? "Der Feed wird geleert. Deine eigenen Beiträge werden endgültig aus diesem Browser entfernt; sichere sie vorher über „Exportieren“, wenn du sie behalten willst. Die Kampagnenbeiträge lassen sich wiederherstellen."
-        : "Der Feed wird geleert. Die Kampagnenbeiträge lassen sich im Profil-Panel wiederherstellen.",
+        : "Der Feed wird geleert. Die Kampagnenbeiträge lassen sich wiederherstellen.",
     confirmLabel: "Alle löschen",
     trigger,
     onConfirm: () => {
@@ -706,6 +910,7 @@ function restoreCampaignPosts() {
   rerenderFeed();
   updateProfileStats();
   closePopover({ returnFocus: false });
+  closeSheet();
   focusPost(missing[0].id);
   showToast(missing.length === 1 ? "1 Kampagnenbeitrag wiederhergestellt" : `${missing.length} Kampagnenbeiträge wiederhergestellt`);
 }
@@ -742,7 +947,10 @@ function updatePost(post, edits) {
 
 const postActions = {
   like: (article) => setLiked(article, !state.get(article.dataset.postId).liked),
-  save: toggleSave,
+  save: (article) => {
+    closePopover({ returnFocus: false });
+    toggleSave(article);
+  },
   comment: goToComments,
   share: openShareSheet,
   "toggle-comments": toggleComments,
@@ -751,6 +959,7 @@ const postActions = {
   "close-menu": () => closePopover(),
   "copy-link": (article) => {
     closePopover();
+    countShare(article.dataset.postId);
     copyPostLink(article.dataset.postId);
   },
   report: openReportSheet,
@@ -767,8 +976,10 @@ const postActions = {
     openPostStory(article.dataset.postId);
   },
   "open-profile": (article, button) => openProfileView(button),
+  "open-media": (article, button) => openMediaViewer(getPost(article.dataset.postId), Number(button.dataset.index ?? 0), button),
   "carousel-prev": (article) => scrollCarousel(article, -1),
   "carousel-next": (article) => scrollCarousel(article, 1),
+  mute: () => toggleSound(),
   cta: (article) => {
     const post = getPost(article.dataset.postId);
     showToast(`„${post.ad?.cta || "Mehr dazu"}“ würde zur verlinkten Seite führen (Simulation).`);
@@ -784,7 +995,7 @@ function bindFeedEvents() {
       return;
     }
     const commentLike = event.target.closest(".comment__like");
-    if (commentLike && article) toggleCommentLike(article, commentLike);
+    if (commentLike && article) toggleCommentLike(article, commentLike, article.querySelector(".comments__list"));
   });
 
   dom.posts.addEventListener("submit", (event) => {
@@ -800,20 +1011,23 @@ function bindFeedEvents() {
     submit.disabled = event.target.value.trim() === "";
   });
 
-  // Doppeltippen bzw. Doppelklick auf das Bild markiert den Beitrag mit "Gefällt mir"
+  // Doppeltippen markiert mit "Gefällt mir"; bei TikTok pausiert einfaches Tippen ein Video
   let lastTap = { time: 0, postId: null };
+  let singleTapTimer = 0;
   dom.posts.addEventListener("pointerup", (event) => {
     const media = event.target.closest(".post__media");
-    if (!media || event.target.closest("button")) return;
+    if (!media || event.target.closest("button") || !platformView().doubleTapLike) return;
     const article = media.closest(".post");
     const now = Date.now();
+    clearTimeout(singleTapTimer);
     if (lastTap.postId === article.dataset.postId && now - lastTap.time < 320) {
       setLiked(article, true);
       showBurst(article);
       lastTap = { time: 0, postId: null };
-    } else {
-      lastTap = { time: now, postId: article.dataset.postId };
+      return;
     }
+    lastTap = { time: now, postId: article.dataset.postId };
+    if (platformView().tapToPause) singleTapTimer = setTimeout(() => togglePlayback(article), 330);
   });
 
   // Bildunterschriften neu kürzen, wenn sich die Breite des Feeds ändert (z. B. beim Gerätewechsel)
@@ -826,4 +1040,8 @@ function bindFeedEvents() {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(layoutAllCaptions);
   }).observe(dom.posts);
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) dom.posts.querySelectorAll("video").forEach((video) => video.pause());
+  });
 }

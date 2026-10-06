@@ -28,19 +28,62 @@ const CAPTION = [
   "#Katastrophenschutz #Zivilschutz #Feuerwehr #THW #Rettungsdienst #Ehrenamt #KRITIS #Hessen",
 ];
 
-// Vorgaben von Instagram, Stand Oktober 2026 laut gängigen Leitfäden (nicht aus offizieller Dokumentation)
-const INSTAGRAM = {
-  feedMinRatio: 3 / 4, // höchstes Hochformat im Feed
-  feedMaxRatio: 1.91, // breitestes Querformat im Feed
-  gridRatio: 3 / 4, // Kacheln im Profilraster
+// Plattformvorgaben, Stand Oktober 2026 laut gängigen Social-Media-Leitfäden (nicht aus offizieller Dokumentation).
+// Seitenverhältnisse als Breite/Höhe; Zonen als Anteil eines 1080 × 1920 großen Bildes.
+const GENERAL = {
   storyRatio: 9 / 16,
-  storySafeZone: 250 / 1920, // oben und unten verdeckt
-  carouselMax: 20,
-  captionMax: 2200,
-  hashtagMax: 5,
+  storySafeZone: 250 / 1920, // oben und unten in Storys verdeckt
   bioMax: 150,
   usernameMax: 30,
 };
+
+const PLATFORMS = {
+  instagram: {
+    id: "instagram",
+    label: "Instagram",
+    feedMinRatio: 3 / 4,
+    feedMaxRatio: 1.91,
+    gridRatio: 3 / 4,
+    gridLabel: "3:4",
+    captionMax: 2200,
+    hashtagMax: 5,
+    hashtagNote: "Laut aktuellen Leitfäden erlaubt Instagram seit Dezember 2025 höchstens 5 Hashtags pro Beitrag.",
+    captionLines: 2,
+    moreLabel: "mehr",
+    multiMax: 20,
+    multiLabel: "Karussell",
+  },
+  tiktok: {
+    id: "tiktok",
+    label: "TikTok",
+    screenRatio: 9 / 16, // Vollbild-Feed, andere Formate erhalten Ränder
+    gridRatio: 3 / 4,
+    gridLabel: "3:4",
+    captionMax: 4000, // Leitfäden nennen teils noch 2.200
+    hashtagMax: null,
+    captionLines: 2,
+    moreLabel: "mehr",
+    multiMax: 35,
+    multiLabel: "Fotobeitrag",
+    feedSafeZone: { top: 130 / 1920, bottom: 484 / 1920, left: 44 / 1080, right: 140 / 1080 },
+  },
+  facebook: {
+    id: "facebook",
+    label: "Facebook",
+    feedMinRatio: 4 / 5,
+    feedMaxRatio: 1.91,
+    gridRatio: 1, // Fotoraster der Seite, vereinfachte Annahme
+    gridLabel: "1:1",
+    captionMax: 63206,
+    hashtagMax: null,
+    captionLines: 3,
+    moreLabel: "Mehr anzeigen",
+    multiMax: null,
+    multiLabel: "Collage",
+  },
+};
+
+const PLATFORM_ORDER = ["instagram", "tiktok", "facebook"];
 
 const CAMPAIGN_POSTS = [
   {
@@ -151,6 +194,9 @@ const REPORT_REASONS = [
   "Verletzung von Urheberrechten",
   "Etwas anderes",
 ];
+
+// Abgeleitete Zähler für Kampagnenbeiträge (Aufrufe, Speicherungen, Weiterleitungen), damit TikTok und Facebook plausibel wirken
+const DERIVED_COUNTS = { views: 13, saves: 0.08, shares: 0.05 };
 
 // Gängige Displaygrößen in CSS-Pixeln; "auto" passt die Höhe ans Fenster an
 const DEVICES = [
