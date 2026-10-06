@@ -121,11 +121,21 @@ const VISIBLE_COMMENTS = 2;
 /* Zustand und Hilfsfunktionen                                         */
 /* ------------------------------------------------------------------ */
 
-function createPostState(post) {
-  return { liked: false, saved: false, likes: post.likes, commentCount: post.commentCount, ownComments: 0 };
+// Zustand pro Beitrag; "stored" ist der im Browser gespeicherte Stand (falls vorhanden)
+function createPostState(post, stored = {}) {
+  const liked = stored.liked === true;
+  const userComments = Array.isArray(stored.comments) ? stored.comments.filter((text) => typeof text === "string") : [];
+  return {
+    liked,
+    saved: stored.saved === true,
+    likes: post.likes + (liked ? 1 : 0),
+    commentCount: post.commentCount + userComments.length,
+    userComments,
+    likedComments: new Set(Array.isArray(stored.likedComments) ? stored.likedComments : []),
+  };
 }
 
-const state = new Map(POSTS.map((post) => [post.id, createPostState(post)]));
+const state = new Map();
 
 const dom = {
   screen: document.getElementById("screen"),
@@ -151,6 +161,9 @@ const dom = {
   profileToggle: document.getElementById("profile-toggle"),
   profilePanel: document.getElementById("profile-panel"),
   savedList: document.getElementById("saved-list"),
+  ownPostsInfo: document.getElementById("own-posts-info"),
+  exportButton: document.getElementById("export-button"),
+  importInput: document.getElementById("import-input"),
   statLiked: document.getElementById("stat-liked"),
   statSaved: document.getElementById("stat-saved"),
   statComments: document.getElementById("stat-comments"),
@@ -174,14 +187,26 @@ function getPostElement(id) {
   return document.getElementById(`post-${id}`);
 }
 
+function postAgeHours(post) {
+  return post.createdAt ? (Date.now() - post.createdAt) / 3600000 : post.hoursAgo;
+}
+
 function formatAgeShort(hours) {
-  if (hours < 1) return "Jetzt";
-  return hours < 24 ? `${hours} Std.` : `${Math.floor(hours / 24)} T.`;
+  if (hours < 1 / 60) return "Jetzt";
+  if (hours < 1) return `${Math.floor(hours * 60)} Min.`;
+  return hours < 24 ? `${Math.floor(hours)} Std.` : `${Math.floor(hours / 24)} T.`;
 }
 
 function formatAgeLong(hours) {
-  if (hours < 1) return "gerade eben";
-  if (hours < 24) return hours === 1 ? "vor 1 Stunde" : `vor ${hours} Stunden`;
+  if (hours < 1 / 60) return "gerade eben";
+  if (hours < 1) {
+    const minutes = Math.floor(hours * 60);
+    return minutes === 1 ? "vor 1 Minute" : `vor ${minutes} Minuten`;
+  }
+  if (hours < 24) {
+    const fullHours = Math.floor(hours);
+    return fullHours === 1 ? "vor 1 Stunde" : `vor ${fullHours} Stunden`;
+  }
   const days = Math.floor(hours / 24);
   return days === 1 ? "vor 1 Tag" : `vor ${days} Tagen`;
 }
@@ -423,6 +448,107 @@ async function copyPostLink(id) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Speicher im Browser (IndexedDB)                                     */
+/* ------------------------------------------------------------------ */
+
+// Eigene Beiträge (mit Bild) und Interaktionen aller Beiträge bleiben so über ein Neuladen erhalten.
+const storage = (() => {
+  const DB_NAME = "feed-simulation";
+  const DB_VERSION = 1;
+  let dbPromise = null;
+
+  function open() {
+    dbPromise ??= new Promise((resolve, reject) => {
+      if (!window.indexedDB) {
+        reject(new Error("IndexedDB wird nicht unterstützt"));
+        return;
+      }
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = () => {
+        request.result.createObjectStore("posts", { keyPath: "id" });
+        request.result.createObjectStore("state", { keyPath: "id" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error("Datenbank ist blockiert"));
+    });
+    return dbPromise;
+  }
+
+  async function run(storeName, mode, operation) {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(storeName, mode);
+      const request = operation(transaction.objectStore(storeName));
+      transaction.oncomplete = () => resolve(request.result);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  }
+
+  return {
+    getAll: (storeName) => run(storeName, "readonly", (store) => store.getAll()),
+    put: (storeName, value) => run(storeName, "readwrite", (store) => store.put(value)),
+    delete: (storeName, id) => run(storeName, "readwrite", (store) => store.delete(id)),
+  };
+})();
+
+let storageAvailable = false;
+
+function handleStorageError(error) {
+  const quota = error?.name === "QuotaExceededError";
+  showToast(quota ? "Nicht genug Speicherplatz im Browser." : "Speichern im Browser fehlgeschlagen.");
+}
+
+function persist(operation) {
+  if (!storageAvailable) return Promise.resolve();
+  return operation().catch(handleStorageError);
+}
+
+function savePostState(postId) {
+  const postState = state.get(postId);
+  if (!postState) return;
+  persist(() =>
+    storage.put("state", {
+      id: postId,
+      liked: postState.liked,
+      saved: postState.saved,
+      comments: postState.userComments,
+      likedComments: [...postState.likedComments],
+    })
+  );
+}
+
+function saveOwnPost(post) {
+  if (storageAvailable) navigator.storage?.persist?.().catch(() => {});
+  persist(() =>
+    storage.put("posts", {
+      id: post.id,
+      blob: post.blob,
+      name: post.name,
+      width: post.width,
+      height: post.height,
+      alt: post.alt,
+      caption: post.caption,
+      createdAt: post.createdAt,
+    })
+  );
+}
+
+async function loadStoredData() {
+  try {
+    const [postRecords, stateRecords] = await Promise.all([storage.getAll("posts"), storage.getAll("state")]);
+    storageAvailable = true;
+    return {
+      ownPosts: postRecords.filter((record) => record.blob instanceof Blob).map(createOwnPost),
+      storedStates: new Map(stateRecords.map((record) => [record.id, record])),
+    };
+  } catch {
+    return { ownPosts: [], storedStates: new Map() };
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Beiträge rendern                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -475,9 +601,16 @@ function renderCaption(article, paragraphs) {
   rest.lastElementChild.append(" ", collapse);
 }
 
+function setPressed(button, pressed, labelPressed, labelDefault) {
+  button.setAttribute("aria-pressed", String(pressed));
+  button.setAttribute("aria-label", pressed ? labelPressed : labelDefault);
+}
+
 function renderPost(post, index) {
   const article = dom.postTemplate.content.firstElementChild.cloneNode(true);
-  const ageLong = formatAgeLong(post.hoursAgo);
+  const postState = state.get(post.id);
+  const age = postAgeHours(post);
+  const ageLong = formatAgeLong(age);
   const fill = (field, value) =>
     article.querySelectorAll(`[data-field="${field}"]`).forEach((el) => {
       el.textContent = value;
@@ -489,12 +622,19 @@ function renderPost(post, index) {
 
   fill("username", ACCOUNT.username);
   fill("location", ACCOUNT.location);
-  fill("age-short", formatAgeShort(post.hoursAgo));
+  fill("age-short", formatAgeShort(age));
   fill("age-long", ageLong);
-  fill("likes", likesLabel(post.likes));
+  fill("likes", likesLabel(postState.likes));
   article.querySelectorAll("time").forEach((time) => {
-    time.dateTime = isoTimeAgo(post.hoursAgo);
+    time.dateTime = isoTimeAgo(age);
   });
+
+  setPressed(article.querySelector('[data-action="like"]'), postState.liked, "Gefällt mir nicht mehr", "Gefällt mir");
+  setPressed(article.querySelector('[data-action="save"]'), postState.saved, "Aus Gespeichert entfernen", "Speichern");
+  if (post.isOwn) {
+    article.querySelector('[data-own-only]').hidden = false;
+    article.querySelector('[data-hide-own]').hidden = true;
+  }
 
   const image = article.querySelector(".post__image");
   image.loading = index === 0 ? "eager" : "lazy";
@@ -507,6 +647,10 @@ function renderPost(post, index) {
 
   const list = article.querySelector('[data-field="comments"]');
   post.comments.forEach((comment, i) => list.append(renderComment(comment, { extra: i >= VISIBLE_COMMENTS })));
+  postState.userComments.forEach((text) => list.append(renderComment({ author: VIEWER, text })));
+  list.querySelectorAll(".comment__like").forEach((button, i) => {
+    if (postState.likedComments.has(i)) button.setAttribute("aria-pressed", "true");
+  });
 
   const input = article.querySelector(".comment-form__input");
   input.id = `comment-input-${post.id}`;
@@ -534,22 +678,23 @@ function setLiked(article, liked) {
   postState.likes += liked ? 1 : -1;
 
   const button = article.querySelector('[data-action="like"]');
-  button.setAttribute("aria-pressed", String(liked));
-  button.setAttribute("aria-label", liked ? "Gefällt mir nicht mehr" : "Gefällt mir");
+  setPressed(button, liked, "Gefällt mir nicht mehr", "Gefällt mir");
   if (liked) restartAnimation(button, "is-popping");
   article.querySelector('[data-field="likes"]').textContent = likesLabel(postState.likes);
   updateProfileStats();
+  savePostState(postId);
 }
 
 function toggleSave(article) {
-  const postState = state.get(article.dataset.postId);
+  const postId = article.dataset.postId;
+  const postState = state.get(postId);
   postState.saved = !postState.saved;
   const button = article.querySelector('[data-action="save"]');
-  button.setAttribute("aria-pressed", String(postState.saved));
-  button.setAttribute("aria-label", postState.saved ? "Aus Gespeichert entfernen" : "Speichern");
+  setPressed(button, postState.saved, "Aus Gespeichert entfernen", "Speichern");
   if (postState.saved) restartAnimation(button, "is-popping");
   showToast(postState.saved ? "Beitrag gespeichert" : "Aus Gespeichert entfernt");
   updateProfileStats();
+  savePostState(postId);
 }
 
 function showBurst(article) {
@@ -589,13 +734,25 @@ function addComment(article, form) {
   const postId = article.dataset.postId;
   const postState = state.get(postId);
   postState.commentCount += 1;
-  postState.ownComments += 1;
+  postState.userComments.push(text);
 
   article.querySelector(".comments__list").append(renderComment({ author: VIEWER, text }, { isNew: true }));
   input.value = "";
   form.querySelector(".comment-form__submit").disabled = true;
   updateCommentsToggle(article, postId);
   updateProfileStats();
+  savePostState(postId);
+}
+
+function toggleCommentLike(article, button) {
+  const postId = article.dataset.postId;
+  const liked = button.getAttribute("aria-pressed") !== "true";
+  const index = [...article.querySelectorAll(".comment__like")].indexOf(button);
+  button.setAttribute("aria-pressed", String(liked));
+  const { likedComments } = state.get(postId);
+  if (liked) likedComments.add(index);
+  else likedComments.delete(index);
+  savePostState(postId);
 }
 
 function hidePost(article) {
@@ -743,13 +900,34 @@ function openShareSheet(article) {
 const ICON_UPLOAD =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="9" cy="9" r="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m3.8 17.5 5-5 4 4 2.5-2.5 4.9 4.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
 
-let newPostCounter = 0;
+function createPostId() {
+  return `eigen-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createOwnPost(record) {
+  return {
+    id: record.id,
+    blob: record.blob,
+    image: record.url ?? URL.createObjectURL(record.blob),
+    name: record.name,
+    width: record.width,
+    height: record.height,
+    alt: record.alt,
+    caption: record.caption,
+    createdAt: record.createdAt,
+    likes: 0,
+    commentCount: 0,
+    comments: [],
+    isOwn: true,
+  };
+}
 
 function loadImageFile(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const image = new Image();
-    image.onload = () => resolve({ url, name: file.name, width: image.naturalWidth, height: image.naturalHeight });
+    image.onload = () =>
+      resolve({ url, blob: file, name: file.name, width: image.naturalWidth, height: image.naturalHeight });
     image.onerror = () => {
       URL.revokeObjectURL(url);
       reject(new Error(file.name));
@@ -765,15 +943,22 @@ function splitParagraphs(text) {
     .filter(Boolean);
 }
 
+// Eigene Beiträge stehen nach Erstellungszeit sortiert über den Kampagnenbeiträgen
+function insertPost(post) {
+  let index = POSTS.findIndex((other) => !other.isOwn || other.createdAt < post.createdAt);
+  if (index === -1) index = POSTS.length;
+  const next = POSTS[index];
+  POSTS.splice(index, 0, post);
+  dom.posts.insertBefore(renderPost(post, 0), next ? getPostElement(next.id) : null);
+}
+
 function addPosts(newPosts) {
-  const fragment = document.createDocumentFragment();
   newPosts.forEach((post) => {
     state.set(post.id, createPostState(post));
-    fragment.append(renderPost(post, 0));
+    insertPost(post);
   });
-  POSTS.unshift(...newPosts);
-  dom.posts.prepend(fragment);
   updateProfileStats();
+  newPosts.forEach(saveOwnPost);
 
   dom.feed.scrollTo({ top: 0, behavior: "smooth" });
   restartAnimation(getPostElement(newPosts[0].id), "is-focused");
@@ -900,18 +1085,20 @@ function openCreateSheet(trigger) {
 
       publish.addEventListener("click", () => {
         const caption = useCampaign.checked ? CAPTION : splitParagraphs(ownCaption.value);
-        const newPosts = drafts.map((draft) => ({
-          id: `neu-${++newPostCounter}`,
-          image: draft.url,
-          width: draft.width,
-          height: draft.height,
-          alt: draft.alt || `Hochgeladenes Bild: ${draft.name}`,
-          hoursAgo: 0,
-          likes: 0,
-          commentCount: 0,
-          comments: [],
-          caption,
-        }));
+        const now = Date.now();
+        const newPosts = drafts.map((draft, i) =>
+          createOwnPost({
+            id: createPostId(),
+            blob: draft.blob,
+            url: draft.url,
+            name: draft.name,
+            width: draft.width,
+            height: draft.height,
+            alt: draft.alt || `Hochgeladenes Bild: ${draft.name}`,
+            caption,
+            createdAt: now - i,
+          })
+        );
         published = true;
         closeSheet();
         addPosts(newPosts);
@@ -925,6 +1112,177 @@ function openCreateSheet(trigger) {
       if (!published) drafts.forEach((draft) => URL.revokeObjectURL(draft.url));
     }
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Eigene Beiträge löschen, exportieren, importieren                   */
+/* ------------------------------------------------------------------ */
+
+function openDeleteSheet(article) {
+  const trigger = article.querySelector('[data-action="menu"]');
+  closePopover({ returnFocus: false });
+  openSheet(
+    "Beitrag löschen?",
+    (body) => {
+      const lead = createElement("p", "sheet__lead", "Der Beitrag wird mit Bild, Likes und Kommentaren aus diesem Browser entfernt.");
+      const confirm = createElement("button", "button-primary button-primary--danger", "Löschen");
+      confirm.type = "button";
+      confirm.addEventListener("click", () => {
+        sheetTrigger = null;
+        closeSheet();
+        deleteOwnPost(article.dataset.postId);
+      });
+      const cancel = createSheetRow("Abbrechen");
+      cancel.classList.add("sheet-row--center");
+      cancel.addEventListener("click", closeSheet);
+      body.append(lead, confirm, cancel);
+    },
+    trigger
+  );
+}
+
+function deleteOwnPost(postId) {
+  const post = getPost(postId);
+  if (!post?.isOwn) return;
+  POSTS.splice(POSTS.indexOf(post), 1);
+  state.delete(postId);
+  getPostElement(postId)?.remove();
+  URL.revokeObjectURL(post.image);
+  persist(() => Promise.all([storage.delete("posts", postId), storage.delete("state", postId)]));
+  updateProfileStats();
+  dom.feed.focus({ preventScroll: true });
+  showToast("Beitrag gelöscht");
+}
+
+function ownPosts() {
+  return POSTS.filter((post) => post.isOwn);
+}
+
+function updateOwnPostsInfo() {
+  const count = ownPosts().length;
+  let text;
+  if (!storageAvailable) {
+    text = "Speichern im Browser ist hier nicht möglich. Eigene Beiträge gehen beim Neuladen verloren.";
+  } else if (count === 0) {
+    text = "Noch keine eigenen Beiträge. Neue Beiträge legst du über das Plus an.";
+  } else {
+    text = `${count === 1 ? "1 eigener Beitrag" : `${count} eigene Beiträge`} in diesem Browser gespeichert.`;
+  }
+  dom.ownPostsInfo.textContent = text;
+  dom.exportButton.disabled = count === 0;
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function dataUrlToBlob(dataUrl) {
+  const match = /^data:(image\/[\w.+-]+);base64,(.+)$/s.exec(dataUrl);
+  if (!match) throw new Error("Ungültige Bilddaten");
+  const binary = atob(match[2]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: match[1] });
+}
+
+function downloadFile(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportOwnPosts() {
+  const posts = ownPosts();
+  if (!posts.length) return;
+  const entries = await Promise.all(
+    posts.map(async (post) => {
+      const postState = state.get(post.id);
+      return {
+        id: post.id,
+        name: post.name,
+        width: post.width,
+        height: post.height,
+        alt: post.alt,
+        caption: post.caption,
+        createdAt: post.createdAt,
+        image: await blobToDataUrl(post.blob),
+        liked: postState.liked,
+        saved: postState.saved,
+        comments: postState.userComments,
+        likedComments: [...postState.likedComments],
+      };
+    })
+  );
+  const data = { format: "feed-simulation", version: 1, exportedAt: new Date().toISOString(), posts: entries };
+  const date = new Date().toISOString().slice(0, 10);
+  downloadFile(new Blob([JSON.stringify(data)], { type: "application/json" }), `feed-simulation-beitraege-${date}.json`);
+  showToast(posts.length === 1 ? "1 Beitrag exportiert" : `${posts.length} Beiträge exportiert`);
+}
+
+async function importEntry(entry) {
+  if (typeof entry?.id !== "string" || typeof entry.image !== "string") throw new Error("Unvollständiger Eintrag");
+  const blob = dataUrlToBlob(entry.image);
+  const name = typeof entry.name === "string" ? entry.name : "Bild";
+  // Abmessungen aus dem Bild selbst lesen, das prüft zugleich, ob es sich laden lässt
+  const loaded = await loadImageFile(new File([blob], name, { type: blob.type }));
+  const post = createOwnPost({
+    id: entry.id,
+    blob,
+    url: loaded.url,
+    name,
+    width: loaded.width,
+    height: loaded.height,
+    alt: typeof entry.alt === "string" && entry.alt ? entry.alt : `Hochgeladenes Bild: ${name}`,
+    caption: Array.isArray(entry.caption) ? entry.caption.filter((text) => typeof text === "string") : CAPTION,
+    createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : Date.now(),
+  });
+  state.set(post.id, createPostState(post, entry));
+  insertPost(post);
+  saveOwnPost(post);
+  savePostState(post.id);
+}
+
+async function importOwnPosts(file) {
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    showToast("Die Datei ist keine gültige Exportdatei.");
+    return;
+  }
+  if (data?.format !== "feed-simulation" || !Array.isArray(data.posts)) {
+    showToast("Die Datei ist keine Exportdatei dieser Feed-Simulation.");
+    return;
+  }
+
+  let imported = 0;
+  let skipped = 0;
+  for (const entry of data.posts) {
+    if (getPost(entry?.id)) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      await importEntry(entry);
+      imported += 1;
+    } catch {
+      skipped += 1;
+    }
+  }
+  updateProfileStats();
+  const parts = [`${imported} ${imported === 1 ? "Beitrag" : "Beiträge"} importiert`];
+  if (skipped) parts.push(`${skipped} übersprungen (schon vorhanden oder fehlerhaft)`);
+  showToast(parts.join(", "));
 }
 
 const postActions = {
@@ -941,6 +1299,7 @@ const postActions = {
     copyPostLink(article.dataset.postId);
   },
   report: openReportSheet,
+  delete: openDeleteSheet,
   hide: hidePost,
   unhide: unhidePost,
 };
@@ -954,10 +1313,7 @@ function bindFeedEvents() {
       return;
     }
     const commentLike = event.target.closest(".comment__like");
-    if (commentLike) {
-      const liked = commentLike.getAttribute("aria-pressed") !== "true";
-      commentLike.setAttribute("aria-pressed", String(liked));
-    }
+    if (commentLike && article) toggleCommentLike(article, commentLike);
   });
 
   dom.posts.addEventListener("submit", (event) => {
@@ -1130,7 +1486,8 @@ function updateProfileStats() {
   const values = [...state.values()];
   dom.statLiked.textContent = values.filter((s) => s.liked).length;
   dom.statSaved.textContent = values.filter((s) => s.saved).length;
-  dom.statComments.textContent = values.reduce((sum, s) => sum + s.ownComments, 0);
+  dom.statComments.textContent = values.reduce((sum, s) => sum + s.userComments.length, 0);
+  updateOwnPostsInfo();
 
   const saved = POSTS.filter((post) => state.get(post.id).saved);
   dom.savedList.replaceChildren();
@@ -1157,7 +1514,7 @@ function updateProfileStats() {
     thumb.height = 45;
 
     const label = document.createElement("span");
-    label.textContent = `Beitrag ${POSTS.indexOf(post) + 1} · ${formatAgeLong(post.hoursAgo)}`;
+    label.textContent = `Beitrag ${POSTS.indexOf(post) + 1} · ${formatAgeLong(postAgeHours(post))}`;
 
     button.append(thumb, label);
     button.addEventListener("click", () => {
@@ -1182,6 +1539,12 @@ function bindHeaderEvents() {
     togglePopover(dom.notificationsToggle, dom.notificationsPanel, { onOpen: markNotificationsRead })
   );
   dom.profileToggle.addEventListener("click", () => togglePopover(dom.profileToggle, dom.profilePanel));
+  dom.exportButton.addEventListener("click", exportOwnPosts);
+  dom.importInput.addEventListener("change", () => {
+    const [file] = dom.importInput.files;
+    dom.importInput.value = "";
+    if (file) importOwnPosts(file);
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1256,7 +1619,12 @@ function openLinkedPost() {
   }
 }
 
-function init() {
+async function init() {
+  const { ownPosts: storedPosts, storedStates } = await loadStoredData();
+  storedPosts.sort((a, b) => b.createdAt - a.createdAt);
+  POSTS.unshift(...storedPosts);
+  POSTS.forEach((post) => state.set(post.id, createPostState(post, storedStates.get(post.id))));
+
   renderFeed();
   renderNotifications();
   updateProfileStats();

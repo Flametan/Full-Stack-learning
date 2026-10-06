@@ -60,6 +60,17 @@
               </dl>
               <p class="popover__subtitle">Gespeicherte Beiträge</p>
               <ul class="saved-list" id="saved-list"></ul>
+              <p class="popover__subtitle">Eigene Beiträge</p>
+              <div class="own-posts">
+                <p class="own-posts__info" id="own-posts-info"></p>
+                <div class="own-posts__actions">
+                  <button class="own-posts__button" type="button" id="export-button">Exportieren</button>
+                  <label class="own-posts__button">
+                    <input class="visually-hidden" type="file" id="import-input" accept="application/json,.json">
+                    Importieren
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
         </nav>
@@ -139,7 +150,8 @@
             <svg class="icon icon--sm" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
           </button>
           <ul class="popover popover--menu" role="menu" hidden>
-            <li role="none"><button class="menu-item menu-item--danger" type="button" role="menuitem" data-action="report">Beitrag melden</button></li>
+            <li role="none" data-own-only hidden><button class="menu-item menu-item--danger" type="button" role="menuitem" data-action="delete">Beitrag löschen</button></li>
+            <li role="none" data-hide-own><button class="menu-item menu-item--danger" type="button" role="menuitem" data-action="report">Beitrag melden</button></li>
             <li role="none"><button class="menu-item" type="button" role="menuitem" data-action="copy-link">Link kopieren</button></li>
             <li role="none"><button class="menu-item" type="button" role="menuitem" data-action="hide">Weniger Beiträge wie diesen</button></li>
             <li role="none"><button class="menu-item menu-item--muted" type="button" role="menuitem" data-action="close-menu">Abbrechen</button></li>

@@ -34,8 +34,21 @@ lassen sich dort anpassen.
   Beitrag oben im Feed, mit Like, Kommentaren, Speichern, Teilen und Menü wie die übrigen.
 - Untere Navigation: Home scrollt nach oben, Suche und Profil öffnen die Panels
 
-Hinzugefügte Bilder bleiben nur bis zum Neuladen der Seite erhalten. Sie werden nirgendwohin
-hochgeladen, sondern nur lokal im Browser angezeigt.
+- Drei Punkte bei eigenen Beiträgen: Beitrag löschen (statt „Beitrag melden“)
+- Profil-Panel: eigene Beiträge als JSON-Datei exportieren und wieder importieren
+
+## Speicherung
+
+Eigene Beiträge (mit Bild, Text und Bildbeschreibung) sowie Likes, Speichern-Markierungen und
+Kommentare aller Beiträge werden im Browser gespeichert (IndexedDB, Datenbank `feed-simulation`)
+und sind nach dem Neuladen wieder da. Es wird nichts an einen Server übertragen.
+
+- Die Daten gelten nur für diesen Browser auf diesem Gerät. Wer die Browserdaten löscht oder in
+  einem privaten Fenster arbeitet, verliert sie.
+- Über Export und Import im Profil-Panel lassen sich eigene Beiträge sichern oder auf einen
+  anderen Rechner übertragen. Die Exportdatei enthält die Bilder eingebettet.
+- Bietet der Browser kein IndexedDB, funktioniert die Seite weiter, eigene Beiträge gehen dann
+  aber beim Neuladen verloren. Das Profil-Panel weist darauf hin.
 
 Kopierte Links zeigen auf den jeweiligen Beitrag (`index.html#post-…`) und springen beim
 Öffnen direkt dorthin.
