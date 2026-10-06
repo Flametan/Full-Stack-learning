@@ -1,3 +1,5 @@
+/* Feed-Simulation. © 2026 Fabian Flemig. Alle Rechte vorbehalten. */
+
 "use strict";
 
 /* Kopfzeile, Navigation, Export/Import, globale Ereignisse und Start */

@@ -1,3 +1,5 @@
+/* Feed-Simulation. © 2026 Fabian Flemig. Alle Rechte vorbehalten. */
+
 "use strict";
 
 /* Einstellungen, Plattform, Dunkelmodus, Gerätegröße, Simulationsmenü und Präsentationsmodus */
@@ -399,7 +401,13 @@ function openToolsSheet(trigger) {
       actions.append(exportButton, importLabel, restore, deleteAll);
       data.append(info, actions);
 
-      body.append(platformSection, tools, data);
+      const copyright = createElement("p", "copyright copyright--sheet");
+      COPYRIGHT_LINES.forEach((line, index) => {
+        if (index) copyright.append(document.createElement("br"));
+        copyright.append(line);
+      });
+
+      body.append(platformSection, tools, data, copyright);
       syncSettingControls();
     },
     trigger,

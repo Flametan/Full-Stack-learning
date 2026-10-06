@@ -1,3 +1,5 @@
+/* Feed-Simulation. © 2026 Fabian Flemig. Alle Rechte vorbehalten. */
+
 "use strict";
 
 /* Inhalte und feste Vorgaben der Simulation */
@@ -17,6 +19,8 @@ const ACCOUNT_DEFAULTS = {
 };
 
 const VIEWER = "mein_profil";
+
+const COPYRIGHT_LINES = ["© 2026 Fabian Flemig. Alle Rechte vorbehalten.", "Kampagnenmotive: Rechte bei den jeweiligen Rechteinhabern."];
 
 // Begleittext, der standardmäßig unter jedem Beitrag steht
 const CAPTION = [

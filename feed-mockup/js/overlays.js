@@ -1,3 +1,5 @@
+/* Feed-Simulation. © 2026 Fabian Flemig. Alle Rechte vorbehalten. */
+
 "use strict";
 
 /* Popover (Dropdowns) und Bottom Sheet */

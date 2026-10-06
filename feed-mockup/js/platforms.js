@@ -1,3 +1,5 @@
+/* Feed-Simulation. © 2026 Fabian Flemig. Alle Rechte vorbehalten. */
+
 "use strict";
 
 /* Darstellung der Beiträge je Plattform. Alle Ansichten nutzen dieselben data-action-Hooks,

@@ -107,3 +107,10 @@ Datenbank `feed-simulation`). Es wird nichts an einen Server übertragen.
 
 Kopierte Links zeigen auf den jeweiligen Beitrag (`index.html#post-…`) und springen beim Öffnen
 direkt dorthin.
+
+## Copyright
+
+© 2026 Fabian Flemig. Alle Rechte vorbehalten.
+
+Der Hinweis gilt für die Simulation (Code und Gestaltung). Die Kampagnenmotive in `images/` und
+der Begleittext liegen bei den jeweiligen Rechteinhabern.
