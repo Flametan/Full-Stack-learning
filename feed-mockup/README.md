@@ -29,7 +29,13 @@ lassen sich dort anpassen.
 - Papierflieger: Teilen-Panel mit Kontaktauswahl und „Link kopieren“
 - Drei Punkte: Beitrag melden, Link kopieren, Weniger Beiträge wie diesen (mit Rückgängig)
 - Kopfzeile: Suche nach Accounts und Hashtags im Feed, Benachrichtigungen, Profil
+- Plus in der unteren Navigation: neue Bilder auswählen oder hineinziehen, optional mit
+  Bildbeschreibung und eigenem Text statt des Kampagnen-Begleittexts. Jedes Bild wird ein eigener
+  Beitrag oben im Feed, mit Like, Kommentaren, Speichern, Teilen und Menü wie die übrigen.
 - Untere Navigation: Home scrollt nach oben, Suche und Profil öffnen die Panels
+
+Hinzugefügte Bilder bleiben nur bis zum Neuladen der Seite erhalten. Sie werden nirgendwohin
+hochgeladen, sondern nur lokal im Browser angezeigt.
 
 Kopierte Links zeigen auf den jeweiligen Beitrag (`index.html#post-…`) und springen beim
 Öffnen direkt dorthin.

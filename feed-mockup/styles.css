@@ -1297,3 +1297,126 @@ li + li > .menu-item {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Neuer Beitrag */
+
+.upload-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: 16px 16px 4px;
+  padding: 22px 16px;
+  border: 1.5px dashed var(--color-border);
+  border-radius: 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.upload-drop:hover,
+.upload-drop.is-dragging {
+  border-color: var(--color-accent);
+  background: #f3f9ff;
+}
+
+.upload-drop:focus-within {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.upload-drop__icon svg {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 4px;
+}
+
+.upload-drop__title {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.upload-drop__hint {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.upload-list {
+  padding: 4px 16px 0;
+}
+
+.upload-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border-light);
+  animation: fade-in 0.2s ease;
+}
+
+.upload-item__thumb {
+  flex: none;
+  width: 56px;
+  height: 70px;
+  border-radius: 6px;
+  background: #f4f4f4;
+  object-fit: contain;
+}
+
+.upload-item__meta {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.upload-item__name {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-item__alt {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.upload-item__alt:focus-visible,
+.upload-caption__text:focus-visible {
+  outline-offset: 0;
+}
+
+.upload-caption {
+  padding: 12px 16px 14px;
+}
+
+.upload-caption__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.upload-caption__check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--color-accent);
+}
+
+.upload-caption__text {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  font: inherit;
+  resize: vertical;
+}

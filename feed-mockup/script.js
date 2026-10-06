@@ -121,12 +121,11 @@ const VISIBLE_COMMENTS = 2;
 /* Zustand und Hilfsfunktionen                                         */
 /* ------------------------------------------------------------------ */
 
-const state = new Map(
-  POSTS.map((post) => [
-    post.id,
-    { liked: false, saved: false, likes: post.likes, commentCount: post.commentCount, ownComments: 0 },
-  ])
-);
+function createPostState(post) {
+  return { liked: false, saved: false, likes: post.likes, commentCount: post.commentCount, ownComments: 0 };
+}
+
+const state = new Map(POSTS.map((post) => [post.id, createPostState(post)]));
 
 const dom = {
   screen: document.getElementById("screen"),
@@ -160,7 +159,12 @@ const dom = {
 
 const numberFormat = new Intl.NumberFormat("de-DE");
 
-const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE =
+  'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+
+function focusableIn(container) {
+  return [...container.querySelectorAll(FOCUSABLE)].filter((el) => el.getClientRects().length > 0);
+}
 
 function getPost(id) {
   return POSTS.find((post) => post.id === id);
@@ -171,10 +175,12 @@ function getPostElement(id) {
 }
 
 function formatAgeShort(hours) {
+  if (hours < 1) return "Jetzt";
   return hours < 24 ? `${hours} Std.` : `${Math.floor(hours / 24)} T.`;
 }
 
 function formatAgeLong(hours) {
+  if (hours < 1) return "gerade eben";
   if (hours < 24) return hours === 1 ? "vor 1 Stunde" : `vor ${hours} Stunden`;
   const days = Math.floor(hours / 24);
   return days === 1 ? "vor 1 Tag" : `vor ${days} Tagen`;
@@ -185,7 +191,15 @@ function isoTimeAgo(hours) {
 }
 
 function likesLabel(count) {
+  if (count === 0) return "Noch keine „Gefällt mir“-Angaben";
   return `Gefällt ${numberFormat.format(count)} Mal`;
+}
+
+function createElement(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text) element.textContent = text;
+  return element;
 }
 
 function initials(name) {
@@ -267,7 +281,7 @@ function openPopover(trigger, panel, { onOpen, onClose } = {}) {
   panel.hidden = false;
   trigger.setAttribute("aria-expanded", "true");
   openPopoverState = { trigger, panel, onClose };
-  panel.querySelector(FOCUSABLE)?.focus();
+  focusableIn(panel)[0]?.focus();
 }
 
 function closePopover({ returnFocus = true } = {}) {
@@ -303,22 +317,26 @@ function handleMenuArrows(event) {
 /* ------------------------------------------------------------------ */
 
 let sheetTrigger = null;
+let sheetOnClose = null;
 let sheetCloseTimer;
 
-function openSheet(title, buildBody, trigger) {
+function openSheet(title, buildBody, trigger, onClose = null) {
   clearTimeout(sheetCloseTimer);
   sheetTrigger = trigger;
+  sheetOnClose = onClose;
   dom.sheetTitle.textContent = title;
   dom.sheetBody.replaceChildren();
   buildBody(dom.sheetBody);
   dom.sheetLayer.hidden = false;
   void dom.sheetLayer.offsetWidth;
   dom.sheetLayer.classList.add("is-open");
-  dom.sheet.querySelector(FOCUSABLE)?.focus();
+  focusableIn(dom.sheet)[0]?.focus();
 }
 
 function closeSheet() {
   if (dom.sheetLayer.hidden) return;
+  sheetOnClose?.();
+  sheetOnClose = null;
   dom.sheetLayer.classList.remove("is-open");
   sheetCloseTimer = setTimeout(() => {
     dom.sheetLayer.hidden = true;
@@ -330,7 +348,7 @@ function closeSheet() {
 
 function trapSheetFocus(event) {
   if (event.key !== "Tab" || dom.sheetLayer.hidden) return;
-  const focusable = [...dom.sheet.querySelectorAll(FOCUSABLE)];
+  const focusable = focusableIn(dom.sheet);
   if (!focusable.length) return;
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
@@ -430,6 +448,33 @@ function updateCommentsToggle(article, postId) {
     : `Alle ${numberFormat.format(state.get(postId).commentCount)} Kommentare ansehen`;
 }
 
+function renderCaption(article, paragraphs) {
+  const caption = article.querySelector(".caption");
+  if (!paragraphs.length) {
+    caption.remove();
+    return;
+  }
+
+  appendRichText(article.querySelector('[data-field="caption-lead"]'), paragraphs[0]);
+  if (paragraphs.length === 1) {
+    caption.classList.remove("is-collapsed");
+    caption.querySelector(".caption__toggle").remove();
+    return;
+  }
+
+  const rest = article.querySelector('[data-field="caption-rest"]');
+  paragraphs.slice(1).forEach((text) => {
+    const paragraph = document.createElement("p");
+    appendRichText(paragraph, text);
+    rest.append(paragraph);
+  });
+  const collapse = createElement("button", "caption__toggle", "weniger");
+  collapse.type = "button";
+  collapse.dataset.action = "toggle-caption";
+  collapse.setAttribute("aria-expanded", "true");
+  rest.lastElementChild.append(" ", collapse);
+}
+
 function renderPost(post, index) {
   const article = dom.postTemplate.content.firstElementChild.cloneNode(true);
   const ageLong = formatAgeLong(post.hoursAgo);
@@ -440,14 +485,13 @@ function renderPost(post, index) {
 
   article.id = `post-${post.id}`;
   article.dataset.postId = post.id;
-  article.setAttribute("aria-label", `Beitrag ${index + 1} von ${ACCOUNT.username}, ${ageLong}`);
+  article.setAttribute("aria-label", `Beitrag von ${ACCOUNT.username}, ${ageLong}`);
 
   fill("username", ACCOUNT.username);
   fill("location", ACCOUNT.location);
   fill("age-short", formatAgeShort(post.hoursAgo));
   fill("age-long", ageLong);
   fill("likes", likesLabel(post.likes));
-  fill("caption-lead", CAPTION[0]);
   article.querySelectorAll("time").forEach((time) => {
     time.dateTime = isoTimeAgo(post.hoursAgo);
   });
@@ -459,19 +503,7 @@ function renderPost(post, index) {
   image.alt = post.alt;
   image.src = post.image;
 
-  const rest = article.querySelector('[data-field="caption-rest"]');
-  CAPTION.slice(1).forEach((text) => {
-    const paragraph = document.createElement("p");
-    appendRichText(paragraph, text);
-    rest.append(paragraph);
-  });
-  const collapse = document.createElement("button");
-  collapse.type = "button";
-  collapse.className = "caption__toggle";
-  collapse.dataset.action = "toggle-caption";
-  collapse.setAttribute("aria-expanded", "true");
-  collapse.textContent = "weniger";
-  rest.lastElementChild.append(" ", collapse);
+  renderCaption(article, post.caption ?? CAPTION);
 
   const list = article.querySelector('[data-field="comments"]');
   post.comments.forEach((comment, i) => list.append(renderComment(comment, { extra: i >= VISIBLE_COMMENTS })));
@@ -704,6 +736,197 @@ function openShareSheet(article) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Neuer Beitrag                                                       */
+/* ------------------------------------------------------------------ */
+
+const ICON_UPLOAD =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="9" cy="9" r="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m3.8 17.5 5-5 4 4 2.5-2.5 4.9 4.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+
+let newPostCounter = 0;
+
+function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => resolve({ url, name: file.name, width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error(file.name));
+    };
+    image.src = url;
+  });
+}
+
+function splitParagraphs(text) {
+  return text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function addPosts(newPosts) {
+  const fragment = document.createDocumentFragment();
+  newPosts.forEach((post) => {
+    state.set(post.id, createPostState(post));
+    fragment.append(renderPost(post, 0));
+  });
+  POSTS.unshift(...newPosts);
+  dom.posts.prepend(fragment);
+  updateProfileStats();
+
+  dom.feed.scrollTo({ top: 0, behavior: "smooth" });
+  restartAnimation(getPostElement(newPosts[0].id), "is-focused");
+  showToast(newPosts.length === 1 ? "Beitrag geteilt" : `${newPosts.length} Beiträge geteilt`);
+}
+
+function openCreateSheet(trigger) {
+  const drafts = [];
+  let published = false;
+  let closed = false;
+
+  openSheet(
+    "Neuer Beitrag",
+    (body) => {
+      const drop = createElement("label", "upload-drop");
+      const fileInput = createElement("input", "visually-hidden");
+      fileInput.type = "file";
+      fileInput.accept = "image/*";
+      fileInput.multiple = true;
+      const icon = createElement("span", "upload-drop__icon");
+      icon.innerHTML = ICON_UPLOAD;
+      drop.append(
+        fileInput,
+        icon,
+        createElement("span", "upload-drop__title", "Bilder auswählen"),
+        createElement("span", "upload-drop__hint", "oder hierher ziehen. Jedes Bild wird ein eigener Beitrag.")
+      );
+
+      const list = createElement("ul", "upload-list");
+
+      const captionField = createElement("div", "upload-caption");
+      const useCampaign = document.createElement("input");
+      useCampaign.type = "checkbox";
+      useCampaign.checked = true;
+      const checkLabel = createElement("label", "upload-caption__check");
+      checkLabel.append(useCampaign, " Begleittext der Kampagne verwenden");
+      const ownCaption = createElement("textarea", "upload-caption__text");
+      ownCaption.rows = 4;
+      ownCaption.placeholder = "Eigene Bildunterschrift schreiben …";
+      ownCaption.setAttribute("aria-label", "Eigene Bildunterschrift");
+      ownCaption.hidden = true;
+      captionField.append(checkLabel, ownCaption);
+
+      const publish = createElement("button", "button-primary", "Teilen");
+      publish.type = "button";
+      publish.disabled = true;
+
+      const updatePublish = () => {
+        publish.disabled = drafts.length === 0;
+        publish.textContent = drafts.length > 1 ? `${drafts.length} Beiträge teilen` : "Teilen";
+      };
+
+      const renderDraft = (draft) => {
+        const item = createElement("li", "upload-item");
+        const thumb = createElement("img", "upload-item__thumb");
+        thumb.src = draft.url;
+        thumb.alt = "";
+        const alt = createElement("input", "upload-item__alt");
+        alt.type = "text";
+        alt.placeholder = "Bildbeschreibung (optional)";
+        alt.setAttribute("aria-label", `Bildbeschreibung für ${draft.name}`);
+        alt.addEventListener("input", () => {
+          draft.alt = alt.value.trim();
+        });
+        const meta = createElement("div", "upload-item__meta");
+        meta.append(createElement("span", "upload-item__name", draft.name), alt);
+
+        const remove = createElement("button", "icon-button upload-item__remove");
+        remove.type = "button";
+        remove.setAttribute("aria-label", `${draft.name} entfernen`);
+        remove.innerHTML =
+          '<svg class="icon icon--sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+        remove.addEventListener("click", () => {
+          drafts.splice(drafts.indexOf(draft), 1);
+          URL.revokeObjectURL(draft.url);
+          item.remove();
+          updatePublish();
+          fileInput.focus();
+        });
+
+        item.append(thumb, meta, remove);
+        list.append(item);
+      };
+
+      const addFiles = async (files) => {
+        const images = [...files].filter((file) => file.type.startsWith("image/"));
+        if (images.length < files.length) showToast("Nur Bilddateien können hinzugefügt werden.");
+        const results = await Promise.allSettled(images.map(loadImageFile));
+        results.forEach((result) => {
+          if (result.status === "fulfilled") {
+            const draft = { ...result.value, alt: "" };
+            if (closed) {
+              URL.revokeObjectURL(draft.url);
+              return;
+            }
+            drafts.push(draft);
+            renderDraft(draft);
+          } else {
+            showToast(`„${result.reason.message}“ konnte nicht geladen werden.`);
+          }
+        });
+        updatePublish();
+      };
+
+      fileInput.addEventListener("change", () => {
+        addFiles(fileInput.files);
+        fileInput.value = "";
+      });
+      drop.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        drop.classList.add("is-dragging");
+      });
+      drop.addEventListener("dragleave", () => drop.classList.remove("is-dragging"));
+      drop.addEventListener("drop", (event) => {
+        event.preventDefault();
+        drop.classList.remove("is-dragging");
+        addFiles(event.dataTransfer.files);
+      });
+
+      useCampaign.addEventListener("change", () => {
+        ownCaption.hidden = useCampaign.checked;
+        if (!useCampaign.checked) ownCaption.focus();
+      });
+
+      publish.addEventListener("click", () => {
+        const caption = useCampaign.checked ? CAPTION : splitParagraphs(ownCaption.value);
+        const newPosts = drafts.map((draft) => ({
+          id: `neu-${++newPostCounter}`,
+          image: draft.url,
+          width: draft.width,
+          height: draft.height,
+          alt: draft.alt || `Hochgeladenes Bild: ${draft.name}`,
+          hoursAgo: 0,
+          likes: 0,
+          commentCount: 0,
+          comments: [],
+          caption,
+        }));
+        published = true;
+        closeSheet();
+        addPosts(newPosts);
+      });
+
+      body.append(drop, list, captionField, publish);
+    },
+    trigger,
+    () => {
+      closed = true;
+      if (!published) drafts.forEach((draft) => URL.revokeObjectURL(draft.url));
+    }
+  );
+}
+
 const postActions = {
   like: (article) => setLiked(article, !state.get(article.dataset.postId).liked),
   save: toggleSave,
@@ -775,11 +998,11 @@ function buildSearchIndex() {
   const entries = [{ type: "account", name: ACCOUNT.username, meta: `${POSTS.length} Beiträge im Feed`, postId: POSTS[0].id }];
   const seen = new Set([ACCOUNT.username]);
 
-  POSTS.forEach((post, index) => {
+  POSTS.forEach((post) => {
     post.comments.forEach((comment) => {
       if (seen.has(comment.author)) return;
       seen.add(comment.author);
-      entries.push({ type: "account", name: comment.author, meta: `Kommentar unter Beitrag ${index + 1}`, postId: post.id });
+      entries.push({ type: "account", name: comment.author, meta: "Kommentar im Feed", postId: post.id });
     });
   });
 
@@ -982,7 +1205,7 @@ const navActions = {
     dom.feed.scrollTo({ top: 0, behavior: "smooth" });
   },
   search: () => (dom.searchPanel.hidden ? openSearch() : closeSearch()),
-  create: () => showToast("Beiträge erstellen ist in dieser Simulation nicht enthalten."),
+  create: (button) => openCreateSheet(button),
   reels: () => showToast("Reels sind in dieser Simulation nicht enthalten."),
   profile: (button) =>
     togglePopover(button, dom.profilePanel, {
