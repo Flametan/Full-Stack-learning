@@ -1,4 +1,4 @@
-/* Feed-Simulation. © 2026 Fabian Flemig. Alle Rechte vorbehalten. */
+/* © 2026 Fabian Flemig */
 
 "use strict";
 

@@ -1,4 +1,4 @@
-/* Feed-Simulation. © 2026 Fabian Flemig. Alle Rechte vorbehalten. */
+/* © 2026 Fabian Flemig */
 
 "use strict";
 
@@ -401,11 +401,7 @@ function openToolsSheet(trigger) {
       actions.append(exportButton, importLabel, restore, deleteAll);
       data.append(info, actions);
 
-      const copyright = createElement("p", "copyright copyright--sheet");
-      COPYRIGHT_LINES.forEach((line, index) => {
-        if (index) copyright.append(document.createElement("br"));
-        copyright.append(line);
-      });
+      const copyright = createElement("p", "copyright copyright--sheet", COPYRIGHT);
 
       body.append(platformSection, tools, data, copyright);
       syncSettingControls();
