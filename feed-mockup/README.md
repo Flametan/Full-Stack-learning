@@ -34,13 +34,15 @@ lassen sich dort anpassen.
   Beitrag oben im Feed, mit Like, Kommentaren, Speichern, Teilen und Menü wie die übrigen.
 - Untere Navigation: Home scrollt nach oben, Suche und Profil öffnen die Panels
 
-- Drei Punkte bei eigenen Beiträgen: Beitrag löschen (statt „Beitrag melden“)
-- Profil-Panel: eigene Beiträge als JSON-Datei exportieren und wieder importieren
+- Drei Punkte: Beitrag löschen, bei jedem Beitrag (eigene und Kampagnenbeiträge)
+- Profil-Panel: eigene Beiträge als JSON-Datei exportieren und wieder importieren, alle Beiträge
+  löschen (leerer Feed, Neustart bei null) und gelöschte Kampagnenbeiträge wiederherstellen
+- Statusleiste oben links: aktuelle Uhrzeit, aktualisiert sich jede Minute
 
 ## Speicherung
 
-Eigene Beiträge (mit Bild, Text und Bildbeschreibung) sowie Likes, Speichern-Markierungen und
-Kommentare aller Beiträge werden im Browser gespeichert (IndexedDB, Datenbank `feed-simulation`)
+Eigene Beiträge (mit Bild, Text und Bildbeschreibung), Likes, Speichern-Markierungen und
+Kommentare aller Beiträge sowie gelöschte Kampagnenbeiträge werden im Browser gespeichert (IndexedDB, Datenbank `feed-simulation`)
 und sind nach dem Neuladen wieder da. Es wird nichts an einen Server übertragen.
 
 - Die Daten gelten nur für diesen Browser auf diesem Gerät. Wer die Browserdaten löscht oder in

@@ -21,12 +21,12 @@ const CAPTION = [
   "#Katastrophenschutz #Zivilschutz #Feuerwehr #THW #Rettungsdienst #Ehrenamt #KRITIS #Hessen",
 ];
 
-const POSTS = [
+const CAMPAIGN_POSTS = [
   {
     id: "mehrfach-verplant",
     image: "images/mehrfach-verplant.png",
-    width: 536,
-    height: 646,
+    width: 565,
+    height: 680,
     alt: "Kampagnenmotiv (KI-generiert): Ein Mann und eine Frau in Einsatzkleidung stehen vor einem Feuerwehrfahrzeug, einem Rettungswagen und einem THW-Fahrzeug mit Blaulicht. Darunter auf dunkelblauem Grund der Text: Mehrfach verplant? Landesweite Abfrage für alle Einsatzkräfte im Zivil- und Katastrophenschutz in Hessen. Zugangsdaten bei Ihrer Führungskraft. Teilnahme bis zum 31. Dezember 2026. Unten rechts das Hessen-Logo.",
     hoursAgo: 2,
     likes: 1284,
@@ -42,8 +42,8 @@ const POSTS = [
   {
     id: "einmal-sie-dreimal-verplant-mann",
     image: "images/einmal-sie-dreimal-verplant-mann.png",
-    width: 534,
-    height: 668,
+    width: 567,
+    height: 709,
     alt: "Kampagnenmotiv (KI-generiert): Ein Mann in Einsatzkleidung mit THW-Aufschrift steht mit dem Helm in der Hand zwischen Einsatzfahrzeugen. Rechts auf dunkelblauem Grund das Hessen-Logo und der Text: Abfrage im Zivil- und Katastrophenschutz. Einmal Sie. Dreimal verplant? Zugangsdaten gibt es bei Ihrer Führungskraft.",
     hoursAgo: 26,
     likes: 963,
@@ -58,8 +58,8 @@ const POSTS = [
   {
     id: "einmal-sie-dreimal-verplant-frau",
     image: "images/einmal-sie-dreimal-verplant-frau.png",
-    width: 533,
-    height: 668,
+    width: 567,
+    height: 711,
     alt: "Kampagnenmotiv (KI-generiert): Eine Frau in Einsatzkleidung mit THW-Aufschrift steht mit dem Helm unter dem Arm vor einem Rettungswagen und einem Einsatzfahrzeug. Rechts auf dunkelblauem Grund das Hessen-Logo und der Text: Abfrage im Zivil- und Katastrophenschutz. Einmal Sie. Dreimal verplant? Zugangsdaten gibt es bei Ihrer Führungskraft.",
     hoursAgo: 72,
     likes: 1047,
@@ -75,8 +75,8 @@ const POSTS = [
   {
     id: "wer-kommt-wenn-alle-rufen",
     image: "images/wer-kommt-wenn-alle-rufen.png",
-    width: 533,
-    height: 669,
+    width: 566,
+    height: 709,
     alt: "Kampagnenmotiv: Auf dunkelblauem Grund das Hessen-Logo und der Text: Feuerwehr, THW, Rettungsdienst und dazu der Hauptberuf. Wer kommt, wenn alle gleichzeitig rufen? Landesweite Abfrage zur Mehrfachverplanung im Zivil- und Katastrophenschutz. Mitmachen bis zum 31. Dezember 2026. Zugangsdaten bei Ihrer Führungskraft.",
     hoursAgo: 120,
     likes: 702,
@@ -88,6 +88,9 @@ const POSTS = [
     ],
   },
 ];
+
+// Alle Beiträge, die gerade im Feed stehen: eigene (neueste zuerst), danach die Kampagnenbeiträge
+const POSTS = [...CAMPAIGN_POSTS];
 
 const SHARE_CONTACTS = [
   "markus.k_112",
@@ -163,6 +166,13 @@ const dom = {
   savedList: document.getElementById("saved-list"),
   ownPostsInfo: document.getElementById("own-posts-info"),
   exportButton: document.getElementById("export-button"),
+  campaignInfo: document.getElementById("campaign-info"),
+  deleteAllButton: document.getElementById("delete-all-button"),
+  restoreButton: document.getElementById("restore-button"),
+  feedEmpty: document.getElementById("feed-empty"),
+  feedEnd: document.getElementById("feed-end"),
+  emptyCreate: document.getElementById("empty-create"),
+  statusTime: document.getElementById("status-time"),
   importInput: document.getElementById("import-input"),
   statLiked: document.getElementById("stat-liked"),
   statSaved: document.getElementById("stat-saved"),
@@ -631,10 +641,7 @@ function renderPost(post, index) {
 
   setPressed(article.querySelector('[data-action="like"]'), postState.liked, "Gefällt mir nicht mehr", "Gefällt mir");
   setPressed(article.querySelector('[data-action="save"]'), postState.saved, "Aus Gespeichert entfernen", "Speichern");
-  if (post.isOwn) {
-    article.querySelector('[data-own-only]').hidden = false;
-    article.querySelector('[data-hide-own]').hidden = true;
-  }
+  if (post.isOwn) article.querySelector("[data-hide-own]").hidden = true;
 
   const image = article.querySelector(".post__image");
   image.loading = index === 0 ? "eager" : "lazy";
@@ -1118,19 +1125,17 @@ function openCreateSheet(trigger) {
 /* Eigene Beiträge löschen, exportieren, importieren                   */
 /* ------------------------------------------------------------------ */
 
-function openDeleteSheet(article) {
-  const trigger = article.querySelector('[data-action="menu"]');
-  closePopover({ returnFocus: false });
+function openConfirmSheet({ title, text, confirmLabel, trigger, onConfirm }) {
   openSheet(
-    "Beitrag löschen?",
+    title,
     (body) => {
-      const lead = createElement("p", "sheet__lead", "Der Beitrag wird mit Bild, Likes und Kommentaren aus diesem Browser entfernt.");
-      const confirm = createElement("button", "button-primary button-primary--danger", "Löschen");
+      const lead = createElement("p", "sheet__lead", text);
+      const confirm = createElement("button", "button-primary button-primary--danger", confirmLabel);
       confirm.type = "button";
       confirm.addEventListener("click", () => {
         sheetTrigger = null;
         closeSheet();
-        deleteOwnPost(article.dataset.postId);
+        onConfirm();
       });
       const cancel = createSheetRow("Abbrechen");
       cancel.classList.add("sheet-row--center");
@@ -1141,17 +1146,85 @@ function openDeleteSheet(article) {
   );
 }
 
-function deleteOwnPost(postId) {
+function openDeleteSheet(article) {
+  const post = getPost(article.dataset.postId);
+  closePopover({ returnFocus: false });
+  openConfirmSheet({
+    title: "Beitrag löschen?",
+    text: post.isOwn
+      ? "Der Beitrag wird mit Bild, Likes und Kommentaren aus diesem Browser entfernt."
+      : "Der Beitrag wird aus dem Feed entfernt. Im Profil-Panel kannst du die Kampagnenbeiträge jederzeit wiederherstellen.",
+    confirmLabel: "Löschen",
+    trigger: article.querySelector('[data-action="menu"]'),
+    onConfirm: () => {
+      deletePost(post.id);
+      updateProfileStats();
+      dom.feed.focus({ preventScroll: true });
+      showToast("Beitrag gelöscht");
+    },
+  });
+}
+
+function deletePost(postId) {
   const post = getPost(postId);
-  if (!post?.isOwn) return;
+  if (!post) return;
   POSTS.splice(POSTS.indexOf(post), 1);
   state.delete(postId);
   getPostElement(postId)?.remove();
-  URL.revokeObjectURL(post.image);
-  persist(() => Promise.all([storage.delete("posts", postId), storage.delete("state", postId)]));
+  if (post.isOwn) {
+    URL.revokeObjectURL(post.image);
+    persist(() => Promise.all([storage.delete("posts", postId), storage.delete("state", postId)]));
+  } else {
+    // Kampagnenbeiträge sind fest im Code; gespeichert wird nur, dass sie ausgeblendet sind
+    persist(() => storage.put("state", { id: postId, deleted: true }));
+  }
+}
+
+function openDeleteAllSheet() {
+  const trigger = openPopoverState?.trigger ?? dom.profileToggle;
+  closePopover({ returnFocus: false });
+  const own = ownPosts().length;
+  openConfirmSheet({
+    title: "Alle Beiträge löschen?",
+    text:
+      own > 0
+        ? "Der Feed wird geleert. Deine eigenen Beiträge werden endgültig aus diesem Browser entfernt; sichere sie vorher über „Exportieren“, wenn du sie behalten willst. Die Kampagnenbeiträge lassen sich wiederherstellen."
+        : "Der Feed wird geleert. Die Kampagnenbeiträge lassen sich im Profil-Panel wiederherstellen.",
+    confirmLabel: "Alle löschen",
+    trigger,
+    onConfirm: () => {
+      [...POSTS].forEach((post) => deletePost(post.id));
+      updateProfileStats();
+      dom.feed.scrollTo({ top: 0 });
+      showToast("Alle Beiträge gelöscht");
+    },
+  });
+}
+
+function missingCampaignPosts() {
+  return CAMPAIGN_POSTS.filter((post) => !getPost(post.id));
+}
+
+function restoreCampaignPosts() {
+  const missing = missingCampaignPosts();
+  if (!missing.length) return;
+  missing.forEach((post) => {
+    state.set(post.id, createPostState(post));
+    persist(() => storage.delete("state", post.id));
+  });
+  POSTS.splice(0, POSTS.length, ...ownPosts(), ...CAMPAIGN_POSTS.filter((post) => state.has(post.id)));
+  dom.posts.replaceChildren();
+  renderFeed();
   updateProfileStats();
-  dom.feed.focus({ preventScroll: true });
-  showToast("Beitrag gelöscht");
+  closePopover({ returnFocus: false });
+  focusPost(missing[0].id);
+  showToast(missing.length === 1 ? "1 Kampagnenbeitrag wiederhergestellt" : `${missing.length} Kampagnenbeiträge wiederhergestellt`);
+}
+
+function updateFeedEmpty() {
+  const empty = POSTS.length === 0;
+  dom.feedEmpty.hidden = !empty;
+  dom.feedEnd.hidden = empty;
 }
 
 function ownPosts() {
@@ -1170,6 +1243,15 @@ function updateOwnPostsInfo() {
   }
   dom.ownPostsInfo.textContent = text;
   dom.exportButton.disabled = count === 0;
+
+  const missing = missingCampaignPosts().length;
+  dom.campaignInfo.textContent =
+    missing === 0
+      ? `${POSTS.length === 1 ? "1 Beitrag" : `${POSTS.length} Beiträge`} im Feed.`
+      : `${POSTS.length === 1 ? "1 Beitrag" : `${POSTS.length} Beiträge`} im Feed, ${missing} von ${CAMPAIGN_POSTS.length} Kampagnenbeiträgen gelöscht.`;
+  dom.deleteAllButton.disabled = POSTS.length === 0;
+  dom.restoreButton.disabled = missing === 0;
+  updateFeedEmpty();
 }
 
 function blobToDataUrl(blob) {
@@ -1540,6 +1622,9 @@ function bindHeaderEvents() {
   );
   dom.profileToggle.addEventListener("click", () => togglePopover(dom.profileToggle, dom.profilePanel));
   dom.exportButton.addEventListener("click", exportOwnPosts);
+  dom.deleteAllButton.addEventListener("click", openDeleteAllSheet);
+  dom.restoreButton.addEventListener("click", restoreCampaignPosts);
+  dom.emptyCreate.addEventListener("click", () => openCreateSheet(dom.emptyCreate));
   dom.importInput.addEventListener("change", () => {
     const [file] = dom.importInput.files;
     dom.importInput.value = "";
@@ -1612,6 +1697,42 @@ function bindGlobalEvents() {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Uhrzeit und Zeitangaben                                             */
+/* ------------------------------------------------------------------ */
+
+function updateClock() {
+  const now = new Date();
+  dom.statusTime.textContent = `${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}`;
+  dom.statusTime.dateTime = now.toISOString();
+}
+
+function refreshPostAges() {
+  POSTS.forEach((post) => {
+    const article = getPostElement(post.id);
+    if (!article) return;
+    const age = postAgeHours(post);
+    article.querySelector('[data-field="age-short"]').textContent = formatAgeShort(age);
+    article.querySelector('[data-field="age-long"]').textContent = formatAgeLong(age);
+  });
+}
+
+// Zum Beginn jeder Minute aktualisieren, damit die Uhr nicht hinterherläuft
+function startClock() {
+  const tick = () => {
+    updateClock();
+    refreshPostAges();
+    setTimeout(tick, 60000 - (Date.now() % 60000) + 50);
+  };
+  tick();
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      updateClock();
+      refreshPostAges();
+    }
+  });
+}
+
 function openLinkedPost() {
   const match = location.hash.match(/^#post-(.+)$/);
   if (match && getPost(match[1])) {
@@ -1622,7 +1743,8 @@ function openLinkedPost() {
 async function init() {
   const { ownPosts: storedPosts, storedStates } = await loadStoredData();
   storedPosts.sort((a, b) => b.createdAt - a.createdAt);
-  POSTS.unshift(...storedPosts);
+  const visibleCampaignPosts = CAMPAIGN_POSTS.filter((post) => !storedStates.get(post.id)?.deleted);
+  POSTS.splice(0, POSTS.length, ...storedPosts, ...visibleCampaignPosts);
   POSTS.forEach((post) => state.set(post.id, createPostState(post, storedStates.get(post.id))));
 
   renderFeed();
@@ -1632,6 +1754,7 @@ async function init() {
   bindHeaderEvents();
   bindNavEvents();
   bindGlobalEvents();
+  startClock();
   openLinkedPost();
 }
 
